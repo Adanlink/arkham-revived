@@ -2,16 +2,23 @@
 // Licensed under the MIT License
 // Copyright (c) 2023 KiwifruitDev
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 // Imports
 const express = require("express");
 const fse = require("fs-extra");
 const Database = require("better-sqlite3");
 const getUuid = require("uuid-by-string");
-const https = require("https");
 const http = require("http");
 const xmljs = require("xml-js");
 const js2xml = xmljs.js2xml;
 const xml2js = xmljs.xml2js;
+
+// Configuration from environment variables
+const HTTP_PORT = process.env.HTTP_PORT || 8080;
+const DEBUG = process.env.DEBUG === 'true';
+const WIPE_DB_ON_START = process.env.WIPE_DB_ON_START === 'true';
 
 // If usercfg folder doesn't exist, copy basecfg to usercfg
 if(!fse.existsSync("./usercfg")) {
@@ -23,8 +30,7 @@ if(!fse.existsSync("./usercfg")) {
         process.exit(1);
     }
 }
-// Load usercfg
-const config = JSON.parse(fse.readFileSync("./usercfg/config.json"));
+// Load usercfg data (excluding config.json)
 const motd = JSON.parse(fse.readFileSync("./usercfg/motd.json"));
 const store = JSON.parse(fse.readFileSync("./usercfg/store.json"));
 const credits = JSON.parse(fse.readFileSync("./usercfg/credits.json"));
@@ -34,565 +40,551 @@ const netvars = fse.readFileSync("./usercfg/netvars.dat").toString("base64");
 const baseinventory = JSON.parse(fse.readFileSync("./usercfg/inventory.json"));
 
 // Database
-const db = new Database("./usercfg/database.db", { verbose: config.debug ? console.log : null });
+// Initialize Better-SQLite3 database instance.
+// Verbose logging can be enabled via config for debugging.
+const db = new Database("./usercfg/database.db", { verbose: DEBUG ? console.log : null });
+// Enable Write-Ahead Logging for better concurrency and performance.
 db.pragma('journal_mode = WAL');
 
-// Delete users table if wipe_on_start is true
-if(config.database.wipe_on_start)
+// Conditionally wipe the users table on startup if configured.
+// This is useful for development or testing environments.
+if(WIPE_DB_ON_START)
 {
-    db.exec("DROP TABLE users");
+    console.log("Wiping users table as per configuration.");
+    db.exec("DROP TABLE IF EXISTS users"); // Use IF EXISTS for safety
 }
 
-// Create users table if it doesn't exist
+// Create users table if it doesn't already exist.
+// Defines the schema for storing user data.
 db.exec("CREATE TABLE IF NOT EXISTS users (uuid TEXT PRIMARY KEY, inventory TEXT, data TEXT, consoleid TEXT, consoleticket TEXT, ip TEXT)");
 
-// Create app and configure
+// Create Express application instance.
 const app = express();
+// Middleware to parse JSON request bodies.
 app.use(express.json());
+// Middleware to parse URL-encoded request bodies.
 app.use(express.urlencoded({ extended: true }));
+// Middleware to parse plain text request bodies, specifically for XML.
 app.use(express.text({ type: "text/xml" }));
 
-// Log requests
-if(config.debug) {
+// Log incoming requests if debug mode is enabled.
+// Provides visibility into server traffic for debugging.
+if(DEBUG) {
     app.use((req, res, next) => {
-        // Log request
-        console.log(`${req.method} ${req.url}`);
-        // Next
+        console.log(`Request: ${req.method} ${req.url}`);
         next();
     });
 }
 
 // Endpoint: /files/netvars.dat
-// Game info stored in base64
+// Serves game information, apparently encoded in base64.
 app.get("/files/netvars.dat", function(req, res) {
-    // Build JSON response
     const response = {
-        "data": netvars,
+        "data": netvars, // Loaded from ./usercfg/netvars.dat
     };
-    // Send response
     res.json(response);
 });
 
 // Endpoint: /auth/token
-// Returns a UUID specific to the user's ticket (Steam, presumably)
+// Handles user authentication, likely based on a game ticket (e.g., from Steam).
+// Returns a UUID (as an access token) for the user.
 app.post("/auth/token", function(req, res) {
-    // Validate authorization header
-    if(!req.headers.authorization) {
-        // Send error
-        res.status(400).send("Invalid authorization header");
-        return;
+    if (!req.headers.authorization) {
+        return res.status(400).send("Invalid authorization header: Missing");
     }
-    // Get authorization header
-    const auth = req.headers.authorization.split(" ");
-    // Verify authorization header
-    if(auth[0] != "Basic") {
-        // Send error
-        res.status(400).send("Invalid authorization header");
-        return;
+    const authParts = req.headers.authorization.split(" ");
+    if (authParts[0] !== "Basic" || !req.body.ticket) { // Also check for ticket presence
+        return res.status(400).send("Invalid authorization header or missing ticket");
     }
-    // Find UUID by ticket header
-    const ticketHeader = req.body.ticket.replace("_", "").replace("-", "");
-    const uuidDb = db.prepare("SELECT uuid FROM users WHERE consoleticket = ?").get(ticketHeader);
+
+    const ticketHeader = req.body.ticket.replace(/[_|-]/g, ""); // Simplify replacement
     let uuid;
-    if(!uuidDb) {
-        // Try looking by ip
-        const ipDb = db.prepare("SELECT uuid FROM users WHERE ip = ?").get(req.ip);
-        if(ipDb) {
-            // Use this uuid
-            uuid = ipDb.uuid;
+
+    // Attempt to find user by console ticket first.
+    const userByTicket = db.prepare("SELECT uuid FROM users WHERE consoleticket = ?").get(ticketHeader);
+    if (userByTicket) {
+        uuid = userByTicket.uuid;
+    } else {
+        // If not found by ticket, try to find by IP address.
+        // Note: Using IP for identification can be unreliable due to dynamic IPs, proxies, etc.
+        const userByIp = db.prepare("SELECT uuid FROM users WHERE ip = ?").get(req.ip);
+        if (userByIp) {
+            uuid = userByIp.uuid;
         } else {
-            // Create new UUID
+            // If no existing user found, generate a new UUID based on the ticket.
             uuid = getUuid(ticketHeader);
         }
-    } else {
-        // Get UUID from database
-        uuid = uuidDb.uuid;
     }
-    const token = {
+
+    const tokenResponse = {
         "token_type": "bearer",
         "access_token": uuid,
-        "expires_in": 1000000,
-        "refresh_token": "",
+        "expires_in": 1000000, // A very long expiry time
+        "refresh_token": "", // Refresh token not implemented
     };
-    // Send response
-    res.json(token);
+    res.json(tokenResponse);
 });
 
 // Endpoint: /motd
-// Used with parameters ?channels.0=all&channels.1=all_no_wbid&channels.2=multiplayer&channels.3=multiplayer_no_wbid&country=US&page=1&per_page=10
-// We're not parsing all of that, so we'll return a static response.
+// Serves the Message of the Day. Parameters are ignored, returns a static response.
 app.get("/motd", function(req, res) {
-    // Send response
-    res.json(motd);
+    res.json(motd); // Loaded from ./usercfg/motd.json
 });
 
 // Endpoint: /store/catalog/general
-// Game catalog
+// Serves the game's item catalog.
 app.get("/store/catalog/general", function(req, res) {
-    // Send response
-    res.json(catalog);
+    res.json(catalog); // Loaded from ./usercfg/catalog.json
 });
 
 // Endpoint: /store/offers
-// Used with parameters ?page=1&vendor=0 or ?page=1&vendor=4
+// Serves store offers. Differentiates based on 'vendor' query parameter.
 app.get("/store/offers", function(req, res) {
-    // Check if vendor is 0 or 4
-    if(req.query.vendor == 4) {
-        res.json(credits);
+    // Vendor ID 4 seems to be for credits, others for general store items.
+    if (req.query.vendor == 4) {
+        res.json(credits); // Loaded from ./usercfg/credits.json
     } else {
-        res.json(store);
+        res.json(store); // Loaded from ./usercfg/store.json
     }
 });
 
 // Endpoint: /store/vouchers/transactions
-// POST by the game
+// Handles voucher redemption POST requests from the game.
 app.post("/store/vouchers/transactions", function(req, res) {
-    // Free vouchers from the game
-    const vouchers = [
+    // A predefined list of "free" or valid voucher IDs.
+    const validVouchers = [
         "e8fd70ec-f3ec-519b-8b57-70518c4c4f74",
         "640144eb-7862-5186-90d0-606211ec2271",
         "54d80a04-cfbc-51a4-91a1-a88a5c96e7ea",
         "82a9febc-5f11-57db-8464-2ed2b4df74f9",
     ];
-    if(!vouchers.includes(req.body.voucher_id)) {
-        // Send error
-        res.status(400).send("Invalid voucher ID");
-        return;
+    if (!req.body.voucher_id || !validVouchers.includes(req.body.voucher_id)) {
+        return res.status(400).send("Invalid or missing voucher ID");
     }
-    // This doesn't follow API spec, but just use the offer_id as the transaction_id
-    const transactionid = req.body.voucher_id;
-    // Build JSON response
+    // The transaction ID is simply the voucher ID in this implementation.
+    const transactionId = req.body.voucher_id;
     const response = {
-        "transaction_id": transactionid,
+        "transaction_id": transactionId,
     };
-    // 201 Created
-    res.status(201).json(response);
+    res.status(201).json(response); // 201 Created
 });
 
 // Endpoint: /store/purchases/transactions
-// POST by the game
+// Handles purchase transaction POST requests from the game.
 app.post("/store/purchases/transactions", function(req, res) {
-    // This doesn't follow API spec, but just use the offer_id as the transaction_id
-    const transactionid = req.body.offer_id;
-    // Build JSON response
+    if (!req.body.offer_id) {
+        return res.status(400).send("Missing offer_id in request body");
+    }
+    // The transaction ID is the offer_id in this implementation.
+    const transactionId = req.body.offer_id;
     const response = {
-        "transaction_id": transactionid,
+        "transaction_id": transactionId,
     };
-    // 201 Created
-    res.status(201).json(response);
+    res.status(201).json(response); // 201 Created
 });
 
-// Transactions
-function Transaction(req, res) {
-    // We don't check transaction IDs, but at least ensure it's there
-    if(!req.params.transactionid) {
-        // Send error
-        res.status(400).send("Invalid transaction ID");
-        return;
+// Shared logic for processing transactions (both vouchers and purchases).
+// This function updates user inventory based on the transaction.
+function processTransaction(req, res) {
+    const transactionId = req.params.transactionid;
+    if (!transactionId) {
+        return res.status(400).send("Invalid transaction ID: Missing");
     }
-    // Validate authorization header
-    if(!req.headers.authorization) {
-        // Send error
-        res.status(400).send("Invalid authorization header");
-        return;
+    if (!req.headers.authorization) {
+        return res.status(400).send("Invalid authorization header: Missing");
     }
-    // Get authorization header
-    const auth = req.headers.authorization.split(" ");
-    // Verify authorization header
-    if(auth[0] != "Bearer") {
-        // Send error
-        res.status(400).send("Invalid authorization header");
-        return;
+    const authParts = req.headers.authorization.split(" ");
+    if (authParts[0] !== "Bearer" || !authParts[1]) {
+        return res.status(400).send("Invalid authorization header: Malformed or missing token");
     }
-    // Get UUID
-    const ticket = auth[1];
-    // Create UUID from ticket
-    let uuid = ticket;
-    // Check if UUID is in database
-    const uuidDb = db.prepare("SELECT uuid FROM users WHERE uuid = ?").get(uuid);
-    if(!uuidDb) {
-        // Report a server error
-        console.log(`ERROR: UUID ${uuid} not found in database!`);
-        res.status(500).send("Internal server error");
-        return;
+
+    const uuid = authParts[1]; // User's UUID from Bearer token.
+
+    // Verify user exists.
+    const userExists = db.prepare("SELECT uuid FROM users WHERE uuid = ?").get(uuid);
+    if (!userExists) {
+        console.error(`Transaction Error: UUID ${uuid} not found in database.`);
+        return res.status(500).send("Internal server error: User not found");
     }
-    // Log UUID
-    console.log(`VOUCHER: ${req.params.transactionid} (${uuid}`);
-    const unlocks = {
-        "items": {},
-    };
-    let replace = true;
+
+    console.log(`Processing transaction: ${transactionId} for user: ${uuid}`);
+
+    const unlocks = { "items": {} }; // Items to be unlocked by this transaction.
+    // TODO: The current switch statement only has one case and might need expansion for real items.
+    // This section seems to handle specific transaction IDs to grant items.
     try {
-        switch(req.params.transactionid) {
-            case "2f93daeb-d68f-4b28-80f4-ace882587a13":
-                // Assortment of consumables
-                let consumables = [];
-                // Get consumables
-                for(let key in catalog.items) {
+        switch(transactionId) {
+            case "2f93daeb-d68f-4b28-80f4-ace882587a13": // Example: "Assortment of consumables"
+                const consumableItems = [];
+                for (const key in catalog.items) {
                     const item = catalog.items[key];
-                    if(item.data && item.data.gangland_is_consumable == "1") {
-                        consumables.push(key);
+                    if (item.data && item.data.gangland_is_consumable == "1") {
+                        consumableItems.push(key);
                     }
                 }
-                // Pick 5 random consumables
-                const consumablecount = 5;
-                for(let i = 0; i < consumablecount; i++) {
-                    const item = consumables[Math.floor(Math.random() * consumables.length)];
-                    if(unlocks.items[item]) {
-                        unlocks.items[item] += 1;
-                    } else {
-                        unlocks.items[item] = 1;
+                if (consumableItems.length > 0) {
+                    const numConsumablesToGrant = 5;
+                    for (let i = 0; i < numConsumablesToGrant; i++) {
+                        const randomItem = consumableItems[Math.floor(Math.random() * consumableItems.length)];
+                        unlocks.items[randomItem] = (unlocks.items[randomItem] || 0) + 1;
                     }
                 }
-                replace = false;
+                break;
+            // Add more cases here for other transaction IDs and their corresponding items.
+            default:
+                console.log(`Transaction ID ${transactionId} does not correspond to a specific item unlock rule.`);
+                // For generic purchases, the client might expect an empty items list or specific item based on offer_id.
+                // This part needs to be aligned with how offer_ids map to catalog items.
                 break;
         }
     } catch (e) {
-        console.log(e);
+        console.error(`Error processing transaction switch for ${transactionId}:`, e);
+        // Decide if to send error or continue with empty unlocks
     }
-    const inventoryprep = db.prepare("SELECT inventory FROM users WHERE uuid = ?");
-    const inventorylist = inventoryprep.get(uuid);
-    let inventoryobj = baseinventory;
-    // Check if inventory exists
-    if(inventorylist && inventorylist.inventory) {
-        inventoryobj = JSON.parse(inventorylist.inventory);
-    }
-    // Add items to inventory
-    for(let itemid in unlocks.items) {
-        // Add item to inventory item count (or create it)
-        if(inventoryobj.inventory[itemid]) {
-            inventoryobj.inventory[itemid] += unlocks.items[itemid];
-        } else {
-            inventoryobj.inventory[itemid] = unlocks.items[itemid];
+
+    // Retrieve current user inventory.
+    const inventoryRow = db.prepare("SELECT inventory FROM users WHERE uuid = ?").get(uuid);
+    let currentUserInventory = { ...baseinventory }; // Start with base inventory.
+    if (inventoryRow && inventoryRow.inventory) {
+        try {
+            currentUserInventory = JSON.parse(inventoryRow.inventory);
+        } catch (e) {
+            console.error(`Error parsing inventory for user ${uuid}:`, e);
+            // Potentially reset to base inventory or return an error.
+            // For now, we'll proceed with baseinventory if parsing fails.
         }
     }
-    // Update inventory
-    const inventory = JSON.stringify(inventoryobj);
-    const inventoryupdate = db.prepare("UPDATE users SET inventory = ? WHERE uuid = ?");
-    inventoryupdate.run(inventory, uuid);
-    // 201 Created
-    res.status(201).json(unlocks);
+
+    // Add unlocked items to the user's inventory.
+    if (!currentUserInventory.inventory) currentUserInventory.inventory = {}; // Ensure inventory object exists
+    for (const itemId in unlocks.items) {
+        currentUserInventory.inventory[itemId] = (currentUserInventory.inventory[itemId] || 0) + unlocks.items[itemId];
+    }
+
+    // Update the user's inventory in the database.
+    try {
+        const updatedInventoryJson = JSON.stringify(currentUserInventory);
+        db.prepare("UPDATE users SET inventory = ? WHERE uuid = ?").run(updatedInventoryJson, uuid);
+    } catch (e) {
+        console.error(`Error stringifying or updating inventory for user ${uuid}:`, e);
+        return res.status(500).send("Internal server error: Could not update inventory.");
+    }
+
+    res.status(201).json(unlocks); // 201 Created with the list of unlocked items.
 }
 
 // Endpoint: /store/vouchers/:transactionid
-// PUT by the game
-app.put("/store/vouchers/:transactionid", Transaction);
+// Handles voucher redemption PUT requests.
+app.put("/store/vouchers/:transactionid", processTransaction);
 
 // Endpoint: /store/purchases/:transactionid
-// PUT by the game
-app.put("/store/purchases/:transactionid", Transaction);
+// Handles purchase completion PUT requests.
+app.put("/store/purchases/:transactionid", processTransaction);
 
-// Endpoint: /users/[uuid]/[sub1]/[sub2]
-// This is where settings and other user data is stored.
-// The game may also PUT to this endpoint.
-// We're going to save the data to a file, maybe in the future we'll use a database.
+
+// Endpoint: /users/:uuid/:subpage?/:subpage2? (GET)
+// Retrieves user-specific data, like profile or inventory.
 app.get("/users/:uuid/:subpage?/:subpage2?", function(req, res) {
-    const urluuid = req.url.split("/")[2]; // req.query doesn't work here
-    const subpage = req.url.split("/")[3];
-    const subpage2 = req.url.split("/")[4];
-    // Validate authorization header
-    if(!req.headers.authorization) {
-        // Send error
-        res.status(400).send("Invalid authorization header");
-        return;
+    const requestUrlUuid = req.params.uuid; // Use req.params for route parameters
+    const subpage = req.params.subpage;
+    const subpage2 = req.params.subpage2;
+
+    if (!req.headers.authorization) {
+        return res.status(401).send("Unauthorized: Missing Authorization header"); // 401 for auth issues
     }
-    // Get authorization header
-    const auth = req.headers.authorization.split(" ");
-    // Verify authorization header
-    if(auth[0] != "Bearer") {
-        // Send error
-        res.status(400).send("Invalid authorization header");
-        return;
+    const authParts = req.headers.authorization.split(" ");
+    if (authParts[0] !== "Bearer" || !authParts[1]) {
+        return res.status(401).send("Unauthorized: Invalid Authorization header format");
     }
-    // Get UUID
-    const ticket = auth[1];
-    // Create UUID from ticket
-    let uuid = ticket;
-    // Log UUID
-    console.log(`AUTH: ${uuid}`);
-    if(urluuid === "me") {
-        if(!subpage) {
-            // Build JSON response with UUID
-            const user = {
-                "user_id": uuid,
-            };
-            // Send response
-            res.json(user);
-        } else if(subpage == "inventory") {
-            // Check if UUID is in database
-            const uuidDb = db.prepare("SELECT uuid FROM users WHERE uuid = ?").get(uuid);
-            if(!uuidDb) {
-                // Report a server error
-                console.log(`ERROR: UUID ${uuid} not found in database!`);
-                res.status(500).send("Internal server error");
-                return;
+    const authenticatedUuid = authParts[1]; // UUID from the token
+
+    if (DEBUG) {
+        console.log(`User data GET request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
+    }
+
+    if (requestUrlUuid === "me") { // "me" refers to the authenticated user
+        if (!subpage) {
+            // Return basic user info (just UUID)
+            return res.json({ "user_id": authenticatedUuid });
+        } else if (subpage === "inventory") {
+            const user = db.prepare("SELECT inventory FROM users WHERE uuid = ?").get(authenticatedUuid);
+            if (!user) {
+                console.error(`Inventory GET: User ${authenticatedUuid} not found.`);
+                return res.status(404).send("User not found");
             }
-            let inventoryobj = baseinventory;
-            let reset = false;
-            // Query database for inventory
-            const inventoryprep = db.prepare("SELECT inventory FROM users WHERE uuid = ?");
-            const inventorylist = inventoryprep.get(uuid);
-            // If inventory doesn't exist, create it
-            if(!inventorylist || !inventorylist.inventory) {
-                // Insert inventory into existing row
-                const inventoryinsert = db.prepare("UPDATE users SET inventory = ? WHERE uuid = ?");
-                inventoryinsert.run(JSON.stringify(inventoryobj), uuid);
+            let inventoryObject = { ...baseinventory }; // Default to base inventory
+            if (user.inventory) {
+                try {
+                    inventoryObject = JSON.parse(user.inventory);
+                } catch (e) {
+                    console.error(`Error parsing inventory for user ${authenticatedUuid}:`, e);
+                    // Fallback to base inventory or handle error
+                }
             } else {
-                // Inventory is a JSON object
-                inventoryobj = JSON.parse(inventorylist.inventory);
-                reset = true;
+                // If no inventory record, create one with base inventory
+                db.prepare("UPDATE users SET inventory = ? WHERE uuid = ?").run(JSON.stringify(inventoryObject), authenticatedUuid);
             }
-            // Send response
-            res.json(inventoryobj);
+            return res.json(inventoryObject);
         }
-    } else if(subpage === "profile") {
-        // Check if UUID is in database
-        const uuidDb = db.prepare("SELECT uuid FROM users WHERE uuid = ?").get(uuid);
-        if(!uuidDb) {
-            // Report a server error
-            console.log(`ERROR: UUID ${uuid} not found in database!`);
-            res.status(500).send("Internal server error");
-            return;
-        }
-        if(subpage2 === "private") {
-            // Check if UUID matches the one in the URL
-            if(uuid != urluuid) {
-                // Send error
-                res.status(400).send("Invalid UUID");
-                return;
+    } else if (subpage === "profile" && requestUrlUuid === authenticatedUuid) { // Can only access own profile
+        if (subpage2 === "private") {
+            const user = db.prepare("SELECT data FROM users WHERE uuid = ?").get(authenticatedUuid);
+            if (!user) {
+                console.error(`Profile GET: User ${authenticatedUuid} not found.`);
+                return res.status(404).send("User not found");
             }
-            // Pull from database
-            const dataprep = db.prepare("SELECT data FROM users WHERE uuid = ?");
-            const data = dataprep.get(uuid);
-            let json = save;
-            // Check if data exists
-            if(!data || !data.data) {
-                // Insert save into existing row
-                const insert = db.prepare("UPDATE users SET data = ? WHERE uuid = ?");
-                insert.run(JSON.stringify(json), uuid);
+            let profileData = { ...save }; // Default to base save data
+            if (user.data) {
+                try {
+                    profileData = JSON.parse(user.data);
+                } catch (e) {
+                    console.error(`Error parsing profile data for user ${authenticatedUuid}:`, e);
+                }
             } else {
-                // Save is a JSON object
-                json = JSON.parse(data.data);
+                // If no profile data, create one with base save data
+                db.prepare("UPDATE users SET data = ? WHERE uuid = ?").run(JSON.stringify(profileData), authenticatedUuid);
             }
-            // Send response
-            res.json(json);
+            return res.json(profileData);
         } else {
-            // unimplemented, return empty object
-            console.log(`Unimplemented endpoint: ${req.url}`);
-            res.json({});
+            console.log(`Unimplemented GET endpoint: /users/${requestUrlUuid}/${subpage}/${subpage2 || ''}`);
+            return res.status(404).json({ message: "Profile sub-resource not found or not implemented." });
         }
-    } else {
-        // unimplemented, return empty object
-        console.log(`Unimplemented endpoint: ${req.url}`);
-        res.json({});
+    } else if (requestUrlUuid !== authenticatedUuid) {
+        return res.status(403).send("Forbidden: Cannot access another user's data.");
     }
+
+    // Fallback for unimplemented paths
+    console.log(`Unimplemented GET endpoint: ${req.url}`);
+    res.status(404).json({ message: "Resource not found or not implemented." });
 });
 
+// Endpoint: /users/:uuid/:subpage?/:subpage2? (PUT)
+// Updates user-specific data.
 app.put("/users/:uuid/:subpage?/:subpage2?", function(req, res) {
-    const urluuid = req.url.split("/")[2]; // req.query doesn't work here
-    const subpage = req.url.split("/")[3];
-    const subpage2 = req.url.split("/")[4];
-    // Validate authorization header
-    if(!req.headers.authorization) {
-        // Send error
-        res.status(400).send("Invalid authorization header");
-        return;
+    const requestUrlUuid = req.params.uuid;
+    const subpage = req.params.subpage;
+    const subpage2 = req.params.subpage2;
+
+    if (!req.headers.authorization) {
+        return res.status(401).send("Unauthorized: Missing Authorization header");
     }
-    // Get authorization header
-    const auth = req.headers.authorization.split(" ");
-    // Get UUID
-    const ticket = auth[1];
-    // Create UUID from ticket
-    let uuid = ticket;
-    if(urluuid === "me") {
-        if(subpage === "wbnet") {
-            // log whatever's in the body
-            console.log(req.body);
-            res.json({
-                message: "No WBNet user linked",
-                code: 2600,
-            });
-            return;
-        } else {
-            // unimplemented, print out
-            console.log(`Unimplemented endpoint: ${req.url}`);
+    const authParts = req.headers.authorization.split(" ");
+    if (authParts[0] !== "Bearer" || !authParts[1]) {
+        return res.status(401).send("Unauthorized: Invalid Authorization header format");
+    }
+    const authenticatedUuid = authParts[1];
+
+    if (DEBUG) {
+        console.log(`User data PUT request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
+    }
+
+    // Users can only modify their own data.
+    if (requestUrlUuid !== "me" && requestUrlUuid !== authenticatedUuid) {
+        return res.status(403).send("Forbidden: Cannot modify another user's data.");
+    }
+    // Resolve "me" to the authenticated user's UUID for database operations.
+    const targetUuid = (requestUrlUuid === "me") ? authenticatedUuid : requestUrlUuid;
+
+    // Ensure user exists before attempting update
+    const userExists = db.prepare("SELECT uuid FROM users WHERE uuid = ?").get(targetUuid);
+    if (!userExists) {
+        console.error(`User PUT: Target user ${targetUuid} not found.`);
+        return res.status(404).send("User not found");
+    }
+
+    if (subpage === "wbnet" && requestUrlUuid === "me") { // Specific handling for /users/me/wbnet
+        console.log("WBNet link attempt:", req.body);
+        // This seems to be a placeholder for linking a WBNet account.
+        return res.json({
+            message: "No WBNet user linked", // Or "WBNet linking not supported."
+            code: 2600, // Specific error code from the game?
+        });
+    } else if (subpage === "profile" && subpage2 === "private") {
+        // Validate request body structure, especially for critical fields like AccountXPLevel.
+        if (!req.body || !req.body.data || typeof req.body.data.AccountXPLevel === 'undefined') {
+            return res.status(400).send("Invalid request body: Missing required fields (e.g., data.AccountXPLevel)");
         }
-    } else if(subpage === "profile") {
-        // Check if UUID is in database
-        const uuidDb = db.prepare("SELECT uuid FROM users WHERE uuid = ?").get(uuid);
-        if(!uuidDb) {
-            // Report a server error
-            console.log(`ERROR: UUID ${uuid} not found in database!`);
-            res.status(500).send("Internal server error");
-            return;
+
+        // Ensure minimum XP levels are met as per game logic.
+        // These seem to be anti-cheat or progression rules.
+        const updatedData = req.body; // Assume req.body is the full private profile structure
+        if (updatedData.data.AccountXPLevel < 24) {
+            updatedData.data.AccountXPLevel = 24;
+            console.log(`User ${targetUuid}: AccountXPLevel adjusted to 24.`);
         }
-        // Check if UUID matches the one in the URL
-        if(uuid != urluuid) {
-            // Send error
-            res.status(400).send("Invalid UUID");
-            return;
+        if (updatedData.data.baneXPLevel < 24) { // Assuming these fields exist
+            updatedData.data.baneXPLevel = 24;
+            console.log(`User ${targetUuid}: baneXPLevel adjusted to 24.`);
         }
-        if(subpage2 === "private") {
-            // Verify authorization header
-            if(auth[0] != "Bearer") {
-                // Send error
-                res.status(400).send("Invalid authorization header");
-                return;
-            }
-            // Check body JSON to ensure .data.AccountXPLevel >= 24
-            if(!req.body.data || !req.body.data.AccountXPLevel || req.body.data.AccountXPLevel < 24) {
-                // Send error
-                res.status(400).send("Invalid body");
-                return;
-            }
-            // Check AccountXPLevel
-            if(req.body.data && req.body.data.AccountXPLevel < 24) {
-                // Just set it
-                req.body.data.AccountXPLevel = 24;
-                // Log to console
-                console.log("Account XP level set");
-            }
-            if(req.body.data && req.body.data.baneXPLevel < 24) {
-                // Just set it
-                req.body.data.baneXPLevel = 24;
-                // Log to console
-                console.log("Bane XP level set");
-            }
-            // Check jokerXPLevel
-            if(req.body.data && req.body.data.jokerXPLevel < 24) {
-                // Just set it
-                req.body.data.jokerXPLevel = 24;
-                // Log to console
-                console.log("Joker XP level set");
-            }
-            // Update database
-            const updateprep = db.prepare("UPDATE users SET data = ? WHERE uuid = ?");
-            updateprep.run(JSON.stringify(req.body), uuid);
-        } else {
-            // unimplemented, print out
-            console.log(`Unimplemented endpoint: ${req.url}`);
+        if (updatedData.data.jokerXPLevel < 24) { // Assuming these fields exist
+            updatedData.data.jokerXPLevel = 24;
+            console.log(`User ${targetUuid}: jokerXPLevel adjusted to 24.`);
+        }
+
+        try {
+            const profileJson = JSON.stringify(updatedData);
+            db.prepare("UPDATE users SET data = ? WHERE uuid = ?").run(profileJson, targetUuid);
+            return res.status(204).send(); // Standard success response for PUT with no content body
+        } catch (e) {
+            console.error(`Error stringifying or updating profile data for user ${targetUuid}:`, e);
+            return res.status(500).send("Internal server error: Could not update profile data.");
         }
     } else {
-        // unimplemented, print out
-        console.log(`Unimplemented endpoint: ${req.url}`);
+        console.log(`Unimplemented PUT endpoint: ${req.url}`);
+        return res.status(404).json({ message: "Resource for update not found or not implemented." });
     }
-    // Send response
-    res.status(204).send();
 });
 
 // Endpoint: /actions/:action
-// Unknown...
+// This endpoint is noted as "Unknown..." - currently not implemented.
+// Consider adding a placeholder or logging if requests hit this.
+app.all("/actions/:action", (req, res) => {
+    console.log(`Received request for unknown /actions endpoint: ${req.params.action}`);
+    res.status(501).send("Not Implemented"); // 501 Not Implemented
+});
 
-// SOAP functions
-function DummyFunc(name, args) {
-    console.log(name);
-    console.log(args);
+
+// SOAP Service Implementation
+// This section handles SOAP requests, which are XML-based.
+
+// Dummy function for logging SOAP calls, can be expanded for actual logic.
+function logSoapCall(functionName, args) {
+    if (DEBUG) {
+        console.log(`SOAP Call: ${functionName}`);
+        console.log("Arguments:", args);
+    }
 }
 
-const wbmanagement = {
-    LookupWbid: function(args, callback) {
-        DummyFunc("LookupWbid", args);
-        // Verify realm
-        //args.realm == "STEAM" && 
-        if(args.title == "OZZY" && args.uniqueId) {
-            // Create or set UUID in database using characters before / in consoleTicket
-            const ticketHeader = args.consoleTicket.replace("/", "").replace("+", "");
-            const uuid = getUuid(ticketHeader);
-            // Create entry if it doesn't exist
-            const user = db.prepare("SELECT * FROM users WHERE consoleid = ?").get(args.consoleId);
-            if(!user) {
-                // Create entry
-                const prep = db.prepare("INSERT INTO users (uuid, inventory, data, consoleid, consoleticket, ip) VALUES (?, ?, ?, ?, ?, ?)");
-                prep.run(uuid, JSON.stringify(baseinventory), JSON.stringify(save), args.consoleId, ticketHeader, args.ip);
+// Object containing handlers for different SOAP actions.
+const soapServiceMethods = {
+    LookupWbid: function(args) {
+        logSoapCall("LookupWbid", args);
+        // Expected arguments: args.realm, args.title, args.uniqueId, args.consoleTicket, args.consoleId, args.ip
+        // Logic to associate a console ID with a WBID (represented by a UUID here).
+        if (args.title === "OZZY" && args.uniqueId && args.consoleTicket && args.consoleId) {
+            const ticketHeader = args.consoleTicket.replace(/[\/\+]/g, ""); // Clean ticket
+            const uuid = getUuid(ticketHeader); // Generate UUID from ticket
+
+            const existingUser = db.prepare("SELECT * FROM users WHERE consoleid = ?").get(args.consoleId);
+            if (!existingUser) {
+                // New user: insert into database.
+                db.prepare("INSERT INTO users (uuid, inventory, data, consoleid, consoleticket, ip) VALUES (?, ?, ?, ?, ?, ?)")
+                  .run(uuid, JSON.stringify(baseinventory), JSON.stringify(save), args.consoleId, ticketHeader, args.ip);
+                console.log(`SOAP: New user created for consoleId ${args.consoleId}, UUID ${uuid}`);
             } else {
-                // Update console ID and ticket
-                const prep = db.prepare("UPDATE users SET consoleticket = ?, uuid = ?, ip = ? WHERE consoleid = ?");
-                prep.run(ticketHeader, uuid, args.ip, args.consoleId);
+                // Existing user: update ticket, UUID, and IP.
+                db.prepare("UPDATE users SET consoleticket = ?, uuid = ?, ip = ? WHERE consoleid = ?")
+                  .run(ticketHeader, uuid, args.ip, args.consoleId);
+                console.log(`SOAP: User updated for consoleId ${args.consoleId}, UUID ${uuid}`);
             }
-            /*
-            return {
-                LookupWbidResult: args.realm + "_" + args.consoleId + "@" + "example.com"
-            };
-            */
+            // The game might expect a specific response structure, which is currently empty.
+            // Example of a possible response field:
+            // return { LookupWbidResult: `${args.realm}_${args.consoleId}@example.com` };
         }
-        return {};
+        return {}; // Default empty response if conditions not met or no specific result needed.
     },
-    AssociateWbid: function(args, callback) {
-        DummyFunc("AssociateWbid", args);
-        return {};
-    },
-    DisassociateWbid: function(args, callback) {
-        DummyFunc("DisassociateWbid", args);
-        return {};
-    },
-    CreateAccount: function(args, callback) {
-        DummyFunc("CreateAccount", args);
-        return {};
-    },
-    CreateAccountAndAssociate: function(args, callback) {
-        DummyFunc("CreateAccountAndAssociate", args);
-        return {};
-    },
-    ResetPassword: function(args, callback) {
-        DummyFunc("ResetPassword", args);
-        return {};
-    },
-    StartWBPasswordReset: function(args, callback) {
-        DummyFunc("StartWBPasswordReset", args);
-        return {};
-    },
-    StartWBPasswordResetFromConsole: function(args, callback) {
-        DummyFunc("StartWBPasswordResetFromConsole", args);
-        return {};
-    },
-    FinishWBPasswordReset: function(args, callback) {
-        DummyFunc("FinishWBPasswordReset", args);
-        return {};
-    },
-    GetSubscriptionInformation: function(args, callback) {
-        DummyFunc("GetSubscriptionInformation", args);
+    AssociateWbid: function(args) { logSoapCall("AssociateWbid", args); return {}; },
+    DisassociateWbid: function(args) { logSoapCall("DisassociateWbid", args); return {}; },
+    CreateAccount: function(args) { logSoapCall("CreateAccount", args); return {}; },
+    CreateAccountAndAssociate: function(args) { logSoapCall("CreateAccountAndAssociate", args); return {}; },
+    ResetPassword: function(args) { logSoapCall("ResetPassword", args); return {}; },
+    StartWBPasswordReset: function(args) { logSoapCall("StartWBPasswordReset", args); return {}; },
+    StartWBPasswordResetFromConsole: function(args) { logSoapCall("StartWBPasswordResetFromConsole", args); return {}; },
+    FinishWBPasswordReset: function(args) { logSoapCall("FinishWBPasswordReset", args); return {}; },
+    GetSubscriptionInformation: function(args) {
+        logSoapCall("GetSubscriptionInformation", args);
+        // Provides dummy subscription information based on consoleId.
+        // This might be related to DLC or online access entitlements.
+        if (!args.consoleId) return { Error: "Missing consoleId" }; // Basic validation
         return {
             GetSubscriptionInformationResult: {
-                WbidAccountId: getUuid(args.consoleId + ":accountid"),
-                SubscriptionId: getUuid(args.consoleId + ":subscriptionid"),
-                AccountId: getUuid(args.consoleId + ":accountid"),
-                Entitlements: [] // ??? I couldn't source a dump of this, may be used for DLC
+                WbidAccountId: getUuid(args.consoleId + ":accountid_sub"), // Ensure unique IDs
+                SubscriptionId: getUuid(args.consoleId + ":subscriptionid_sub"),
+                AccountId: getUuid(args.consoleId + ":accountid_sub_detail"),
+                Entitlements: [] // Placeholder for entitlements array
             }
         };
     }
 };
 
-// Pretty much half-implemented SOAP server
-// No WDSL because the soap package does not immediately support the official one.
-// The game doesn't call it, so it's not needed.
-function SOAPPost(req, res) {
-    // Get XML as JSON
-    const xml = xml2js(req.body);
-    let soapreq = {
-        name: "",
-        args: {}
-    };
-    for(let i = 0; i < xml.elements.length; i++) {
-        for(let j = 0; j < xml.elements[i].elements.length; j++) {
-            soapreq.name = xml.elements[i].elements[j].elements[0].name;
-            for(let k = 0; k < xml.elements[i].elements[j].elements[0].elements.length; k++) {
-                if(xml.elements[i].elements[j].elements[0].elements[k].elements != undefined) {
-                    for(let l = 0; l < xml.elements[i].elements[j].elements[0].elements[k].elements.length; l++) {
-                        soapreq.args[xml.elements[i].elements[j].elements[0].elements[k].name] = xml.elements[i].elements[j].elements[0].elements[k].elements[l].text;
-                    }
+// Generic SOAP request handler.
+// Parses the incoming XML, calls the appropriate service method, and formats the XML response.
+function handleSoapRequest(req, res) {
+    let requestData;
+    try {
+        requestData = xml2js(req.body, { compact: false }); // Use non-compact for detailed parsing
+    } catch (e) {
+        console.error("SOAP Error: Invalid XML request:", e);
+        return res.status(400).type('text/xml').send(buildSoapFault("Client", "Invalid XML format"));
+    }
+
+    // Navigate through the SOAP envelope to find the method name and arguments.
+    // This parsing can be complex and error-prone due to XML verbosity.
+    let methodName, methodArgs = {};
+    try {
+        const bodyContent = requestData.elements[0].elements.find(el => el.name === "soap:Body").elements[0];
+        methodName = bodyContent.name;
+        if (bodyContent.elements) {
+            bodyContent.elements.forEach(argEl => {
+                if (argEl.elements && argEl.elements.length > 0 && argEl.elements[0].type === 'text') {
+                    methodArgs[argEl.name] = argEl.elements[0].text;
                 } else {
-                    soapreq.args[xml.elements[i].elements[j].elements[0].elements[k].name] = xml.elements[i].elements[j].elements[0].elements[k].text;
+                     methodArgs[argEl.name] = null; // Handle elements without text content
+                }
+            });
+        }
+    } catch (e) {
+        console.error("SOAP Error: Could not parse method name or arguments from request:", e);
+        return res.status(500).type('text/xml').send(buildSoapFault("Server", "Error parsing SOAP request structure"));
+    }
+
+    methodArgs.ip = req.ip; // Add client IP to arguments for service methods.
+
+    let resultData;
+    let fault = false;
+
+    if (soapServiceMethods[methodName]) {
+        try {
+            resultData = soapServiceMethods[methodName](methodArgs);
+            if (resultData && Object.keys(resultData).length === 0 && methodName !== "LookupWbid" && methodName !== "AssociateWbid" && methodName !== "DisassociateWbid" && methodName !== "CreateAccount" && methodName !== "CreateAccountAndAssociate" && methodName !== "ResetPassword" && methodName !== "StartWBPasswordReset" && methodName !== "StartWBPasswordResetFromConsole" && methodName !== "FinishWBPasswordReset") { // Some methods might legitimately return empty
+                // Consider if empty result is an error or expected for this method.
+                // For now, only GetSubscriptionInformation returning empty would be a clear fault.
+                if (methodName === "GetSubscriptionInformation") {
+                    console.warn(`SOAP: Method ${methodName} returned empty, treating as fault.`);
+                    fault = true;
                 }
             }
+        } catch (e) {
+            console.error(`SOAP Error: Exception in method ${methodName}:`, e);
+            resultData = { ErrorMessage: e.message }; // Include error in response if possible
+            fault = true;
         }
+    } else {
+        console.warn(`SOAP: Unhandled method called: ${methodName}`);
+        fault = true; // Method not found.
     }
-    let xmlres = {
-        declaration: {
-            attributes: {
-                version: "1.0",
-                encoding: "utf-8"
-            }
-        },
+
+    res.type('text/xml');
+    if (fault) {
+        // For some faults, the game expects a specific structure.
+        // This is a generic fault, customize if needed per method.
+        const faultCode = soapServiceMethods[methodName] ? "Server" : "Client.MethodNotFound";
+        const faultString = soapServiceMethods[methodName] ? `Error processing ${methodName}` : `Method ${methodName} not found.`;
+        return res.status(500).send(buildSoapFault(faultCode, faultString, resultData ? JSON.stringify(resultData.ErrorMessage || resultData) : "No additional details."));
+    } else {
+        // Build successful SOAP response.
+        const responseXml = buildSoapResponse(methodName, resultData);
+        return res.status(200).send(responseXml);
+    }
+}
+
+// Helper to build a SOAP success response XML string.
+function buildSoapResponse(methodName, resultData) {
+    const responseBody = {};
+    responseBody[methodName + "Response"] = resultData; // e.g., { LookupWbidResponse: { ... } }
+
+    const soapEnvelope = {
+        declaration: { attributes: { version: "1.0", encoding: "utf-8" } },
         elements: [{
             type: "element",
             name: "soap:Envelope",
@@ -604,199 +596,178 @@ function SOAPPost(req, res) {
             elements: [{
                 type: "element",
                 name: "soap:Body",
-                elements: []
+                elements: [js2xml({element: responseBody}, {compact:false}).elements[0]] // Convert resultData to XML structure
             }]
         }]
     };
-    let soapres = {
-        name: "",
-        args: {}
+    try {
+        return js2xml(soapEnvelope, { compact: false, spaces: DEBUG ? 2 : 0 }); // Pretty print if debug
+    } catch (e) {
+        console.error("SOAP Error: Failed to serialize success response:", e);
+        // Fallback to a generic server fault if serialization fails
+        return buildSoapFault("Server", "Failed to serialize SOAP response.");
+    }
+}
+
+
+// Helper to build a SOAP Fault XML string.
+function buildSoapFault(faultCode, faultString, detail = "") {
+    const faultStructure = {
+        "soap:Fault": {
+            faultcode: `soap:${faultCode}`, // e.g., soap:Server or soap:Client
+            faultstring: faultString,
+            detail: detail
+        }
     };
-    // Content type
-    res.set("Content-Type", "text/xml");
-    let fault = false;
-    // Call SOAP function
-    if(wbmanagement[soapreq.name]) {
-        soapres.name = soapreq.name + "Response";
-        // Add IP address to args
-        let args = soapreq.args;
-        args.ip = req.ip;
-        soapres.args = wbmanagement[soapreq.name](args);
-        // Empty check
-        if(Object.keys(soapres.args).length === 0) {
-            fault = true;
-            res.status(500);
-        } else {
-            // Build XML response
-            xmlres.elements[0].elements[0].elements.push({
-                type: "element",
-                name: soapres.name,
-                elements: []
-            });
-            for(let key in soapres.args) {
-                xmlres.elements[0].elements[0].elements[0].elements.push({
-                    type: "element",
-                    name: key,
-                    elements: [{
-                        type: "text",
-                        text: soapres.args[key]
-                    }]
-                });
+    // The game might expect a very specific fault structure for ticket expiry.
+    // This is a generic one.
+    if (faultString.includes("SteamTicketInformation ticket has expired")) {
+        faultStructure["soap:Fault"] = { // Overwrite with specific structure if needed
+            "soap:Code": {"_text": "soap:Receiver"},
+            "soap:Reason": {"_text": "Unhandled exception ---> The provided SteamTicketInformation ticket has expired."},
+            "soap:Node": {"_text": "Turbine.Ams.Steam.SteamAuthenticationProvider.ValidateExternalTicket_worker"},
+            "detail": {
+                "exceptiontype": {"_text": "Turbine.Security.TicketExpiredException"},
+                "errorcode": {"_text": "0xA01B000C"}
             }
-        }
-    } else {
-        fault = true;
-        res.status(500);
+        };
     }
-    if(fault) {
-        // Build XML fault
-        xmlres.elements[0].elements[0].elements.push({
+
+    const soapEnvelope = {
+        declaration: { attributes: { version: "1.0", encoding: "utf-8" } },
+        elements: [{
             type: "element",
-            name: "soap:Fault",
-            elements: [
-                {
-                    type: "element",
-                    name: "soap:Code",
-                    elements: [{
-                        type: "text",
-                        text: "soap:Receiver"
-                    }]
-                },
-                {
-                    type: "element",
-                    name: "soap:Reason",
-                    elements: [{
-                        type: "text",
-                        text: "Unhandled exception ---> The provided SteamTicketInformation ticket has expired."
-                    }]
-                },
-                {
-                    type: "element",
-                    name: "soap:Node",
-                    elements: [{
-                        type: "text",
-                        text: "Turbine.Ams.Steam.SteamAuthenticationProvider.ValidateExternalTicket_worker"
-                    }]
-                },
-                {
-                    type: "element",
-                    name: "detail",
-                    elements: [
-                        {
-                            type: "element",
-                            name: "exceptiontype",
-                            elements: [{
-                                type: "text",
-                                text: "Turbine.Security.TicketExpiredException"
-                            }]
-                        },
-                        {
-                            type: "element",
-                            name: "errorcode",
-                            elements: [{
-                                type: "text",
-                                text: "0xA01B000C"
-                            }]
-                        }
-                    ]
-                }
-            ]
-        });
-    }
-    // Send response
-    res.send(js2xml(xmlres));
-}
-
-app.post("/CLS/WbAccountManagement.asmx", SOAPPost);
-app.post("/CLS/WbSubscriptionManagement.asmx", SOAPPost);
-
-// Start servers
-function done() {
-    if(config.debug) {
-        console.log(`WEB: Listening on port ${config.host.https_enabled ? config.host.https_port : config.host.http_port}`);
+            name: "soap:Envelope",
+            attributes: {
+                "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+                "xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
+                "xmlns:soap": "http://schemas.xmlsoap.org/soap/envelope/"
+            },
+            elements: [{
+                type: "element",
+                name: "soap:Body",
+                elements: [ { type: "element", name: "soap:Fault", elements: js2xml(faultStructure['soap:Fault'], {compact:false}).elements } ]
+            }]
+        }]
+    };
+     try {
+        return js2xml(soapEnvelope, { compact: false, spaces: DEBUG ? 2 : 0 });
+    } catch (e) {
+        console.error("SOAP Error: Failed to serialize FAULT response:", e);
+        // Ultimate fallback if even fault serialization fails
+        return "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><soap:Fault><faultcode>soap:Server</faultcode><faultstring>Internal server error during fault serialization.</faultstring></soap:Fault></soap:Body></soap:Envelope>";
     }
 }
-let server;
-let server_passthrough;
-if(!config.host.https_enabled) {
-    server = app.listen(config.host.http_port, () => {
-        done();
-    });
-} else {
-    server = https.createServer({
-        key: fse.readFileSync(`./usercfg/${config.host.https_key}`),
-        cert: fse.readFileSync(`./usercfg/${config.host.https_cert}`),
-    }, app).listen(config.host.https_port, () => {
-        done();
-    });
-    server.on("tlsClientError", err => {
-        if(config.debug) {
-            console.error(err);
-        }
-    });
-    server.on("connection", socket => {
-        socket.on("error", err => {
-            if(config.debug) {
-                console.error(err);
-            }
-        });
-        socket.on("data", data => {
-            if(config.debug) {
-                console.log(`WEB: TLS read ${data.length} bytes`);
-            }
-        });
-    });
-}
-if(config.host.localhost_passthrough_enabled) {
-    // Passthrough server
-    server_passthrough = http.createServer(app).listen(config.host.localhost_passthrough_port, () => {
-        if(config.debug) {
-            console.log(`WEB: Passthrough on port ${config.host.localhost_passthrough_port}`);
-        }
-    });
-}
 
-// Connection storage
-let connections = [];
-server.on('connection', connection => {
-    connections.push(connection);
+// Register SOAP endpoints.
+app.post("/CLS/WbAccountManagement.asmx", handleSoapRequest);
+app.post("/CLS/WbSubscriptionManagement.asmx", handleSoapRequest);
+
+
+// SERVER SETUP AND GRACEFUL SHUTDOWN
+
+// Create the HTTP server instance using the Express app.
+// This server will handle all incoming HTTP requests.
+const server = http.createServer(app);
+
+// Start listening on the HTTP port specified in the configuration.
+server.listen(HTTP_PORT, () => {
+    // Log a message indicating the server is listening, if debug mode is enabled.
+    if (DEBUG) {
+        console.log(`HTTP Server: Listening on port ${HTTP_PORT}`);
+    }
+});
+
+// Error handling for the server (e.g., if the port is already in use).
+server.on("error", (err) => {
+    console.error("HTTP Server startup error:", err.message);
+    // Exit the process with an error code, as the server cannot start.
+    process.exit(1);
+});
+
+// Store active connections to allow for graceful shutdown.
+// A Set is used to efficiently add and remove connections.
+const activeConnections = new Set();
+server.on('connection', (connection) => {
+    activeConnections.add(connection);
+    // When a connection is closed, remove it from the active set.
     connection.on('close', () => {
-        connections = connections.filter(curr => curr !== connection);
+        activeConnections.delete(connection);
     });
 });
-if(config.host.localhost_passthrough_enabled) {
-    server_passthrough.on('connection', connection => {
-        connections.push(connection);
-        connection.on('close', () => {
-            connections = connections.filter(curr => curr !== connection);
-        });
+
+// Implements graceful shutdown logic for the application.
+// This function is called when the process receives a termination signal.
+function gracefulShutdown(signal) {
+    console.log(`${signal} received. Shutting down gracefully...`);
+
+    // 1. Stop accepting new incoming connections.
+    server.close((err) => {
+        if (err) {
+            // Log an error if the server fails to close, but proceed with shutdown.
+            console.error("Error during HTTP server shutdown:", err.message);
+        } else {
+            console.log("HTTP server closed.");
+        }
+
+        // 2. Close the database connection.
+        // Check if the database object exists and has a close method.
+        if (db && typeof db.close === 'function') {
+            const dbCloseTimeout = setTimeout(() => {
+                console.error("Database close timed out. Forcing exit.");
+                process.exit(1);
+            }, 5000); // 5 seconds for DB to close
+
+            db.close((dbErr) => {
+                clearTimeout(dbCloseTimeout);
+                if (dbErr) {
+                    console.error("Error closing database:", dbErr.message);
+                    process.exit(1); // Exit with error if database closing fails.
+                } else {
+                    console.log("Database connection closed.");
+                    process.exit(0); // Exit successfully after all cleanup.
+                }
+            });
+        } else {
+            // If there's no database or it's already closed, exit.
+            console.log("Database connection not available or already closed.");
+            process.exit(err ? 1 : 0); // Exit based on server close status.
+        }
     });
+
+    // 3. Forcefully close any remaining active connections after a brief period.
+    // This ensures that the shutdown process doesn't hang indefinitely.
+    const connectionDestroyTimeout = 2000; // Give connections 2 seconds to close naturally
+    setTimeout(() => {
+        if (activeConnections.size > 0) {
+            console.log(`Forcing close of ${activeConnections.size} remaining connections after ${connectionDestroyTimeout}ms.`);
+            activeConnections.forEach(connection => connection.destroy());
+        }
+    }, connectionDestroyTimeout);
+
+    // 4. Fallback timeout to ensure the process exits if server.close() or db.close() hangs.
+    const forceExitTimeout = 10000; // Total 10 seconds for graceful shutdown.
+    setTimeout(() => {
+        console.error("Graceful shutdown timed out. Forcing exit.");
+        process.exit(1);
+    }, forceExitTimeout);
 }
 
-// Closing
-function Close(param) {
-    if(param instanceof Error)
-        console.error(param);
-    // Log
-    if(config.debug)
-        console.log("Shutting down...");
-    // Close database
-    db.close();
-    // Close connections
-    connections.forEach((connection) => {
-        connection.destroy();
-    });
-    // Close server
-    server.close();
-    if(config.localhost_passthrough_enabled)
-        server_passthrough.close();
-    // Exit
-    process.exit();
-}
+// Listen for common termination signals to trigger graceful shutdown.
+process.on("SIGINT", () => gracefulShutdown("SIGINT")); // Ctrl+C
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM")); // kill command
 
-process.on("SIGINT", Close);
-process.on("SIGTERM", Close);
-process.on("SIGUSR1", Close);
-process.on("SIGUSR2", Close);
-process.on("uncaughtException", Close);
-process.on("unhandledRejection", Close);
+// Handle uncaught exceptions by initiating a graceful shutdown.
+// This is crucial for cleaning up resources before the process terminates unexpectedly.
+process.on("uncaughtException", (err, origin) => {
+    console.error(`Uncaught Exception at: ${origin}, error: ${err.message}`);
+    console.error(err.stack); // Log the stack trace for debugging.
+    gracefulShutdown("uncaughtException");
+});
+
+// Handle unhandled promise rejections by initiating a graceful shutdown.
+// Similar to uncaught exceptions, this ensures cleanup on unhandled promise errors.
+process.on("unhandledRejection", (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    gracefulShutdown("unhandledRejection");
+});

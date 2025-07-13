@@ -4,7 +4,7 @@
 
 A custom authentication server for Batman: Arkham Origins Online.
 
-Supports user authentication, saving of player data, linkage to Steam and Discord accounts, and Discord game invite generation.
+Supports user authentication and saving of player data.
 
 Join the [Discord](https://discord.gg/rrwWcy82fr) for support, updates, and matchmaking.
 
@@ -35,10 +35,10 @@ Follow these steps in order to play on Arkham: Revived.
 
     ```ini
     [GDHttp]
-    BaseUrl="http://[Source IP Address]:8385/"
+    BaseUrl="http://[Source IP Address]:8080/"
     EchoBaseURL="http://in.echo.fireteam.net/"
     WBIDTicketURL="https://tokenservice.psn.turbine.com/TokenService"
-    WBIDAMSURL="http://[Source IP Address]:8385/CLS"
+    WBIDAMSURL="http://[Source IP Address]:8080/CLS"
     ClientId="0938aa7a-6682-4b90-a97d-90becbddb9ce"
     ClientIdSP="6ca97b4e-d278-48a4-8b66-80468447a513"
     ClientSecret="GXnNQaRSuxaxlm6uR35HVk39u"
@@ -48,7 +48,7 @@ Follow these steps in order to play on Arkham: Revived.
     Environment="Live"
     ```
 
-    - Note: The `BaseUrl` and `WBIDAMSURL` values are the only ones that need to be changed.
+    - Note: The `BaseUrl` and `WBIDAMSURL` values are the only ones that need to be changed. The port should match the `HTTP_PORT` you configure for the server (default is 8080).
     - You must obtain the source IP address of the server you're connecting to. This is usually found in the "Getting Started" section of the server's website.
 
 5. Save the file and close it. This will allow the game to connect to Arkham: Revived.
@@ -64,7 +64,10 @@ Follow these steps in order to play on Arkham: Revived.
 
 ### Migration
 
-Migrating progress from official servers is possible, follow these steps to start the process.
+> [!WARNING]
+> As the official game servers are no longer online, the migration feature is non-functional. This section is kept for historical purposes only.
+
+Migrating progress from official servers was previously possible by following these steps.
 
 1. Follow the above steps and launch the game if you haven't already.
 2. Take note of the price of the "Migrations" store option. This is the total number of migrations performed.
@@ -77,46 +80,55 @@ Migrating progress from official servers is possible, follow these steps to star
 
 ## Setup
 
-Setting up your own Arkham: Revived instance requires quite a bit of setup within the command line and external services.
+Setting up your own Arkham: Revived instance is straightforward.
 
 There is no need to create your own instance, as an instance is already hosted at `arkham.kiwifruitdev.page` for public use.
 
 ### Requirements
 
-- [Node.js](https://nodejs.org/en/)
-- [Steam API Key](https://steamcommunity.com/dev/apikey)
-- [Discord Application](https://discord.com/developers/applications)
+- [Node.js](https://nodejs.org/en/) (v14.21.1 or later)
+- [Git](https://git-scm.com/)
+
+> [!NOTE]
+> Previous versions of this server required Steam or Discord API keys. This is no longer the case. The server is self-contained.
 
 ### Installation
 
 Use the following commands to install and run the server.
 
 ```bash
+# Clone the repository
 git clone https://github.com/KiwifruitDev/arkham-revived.git
 cd arkham-revived
+
+# Install dependencies
 npm install
 ```
 
-Then create a `.env` file and set the following variables.
+Then create a `.env` file from the example.
 
-```env
-ARKHAM_UUID_KEY=[UUID key]
-STEAM_API_KEY=[Steam API key]
-DISCORD_CLIENT_ID=[Discord Application OAuth2 Client ID]
-DISCORD_CLIENT_SECRET=[Discord Application OAuth2 Client Secret]
-DISCORD_BOT_TOKEN=[Discord Application Bot Token]
+```bash
+cp .env.example .env
 ```
 
-Use a [UUID generator](https://www.uuidgenerator.net/) to generate a UUID key, this is the server's private authentication key.
-
-Generate a [Steam API key](https://steamcommunity.com/dev/apikey) in order to save player data.
-
-Create a [Discord Application](https://discord.com/developers/applications) and create a bot.
+You can edit the `.env` file to change the default port or other settings.
 
 Now, start the server.
 
 ```bash
 node .
+```
+
+### Docker
+
+Alternatively, you can run the server using Docker.
+
+```bash
+# Build the docker image
+docker build -t arkham-revived .
+
+# Run the container
+docker run -p 8080:8080 -d --name arkham-server arkham-revived
 ```
 
 ### Message Of The Day
@@ -129,11 +141,7 @@ This file contains an array (max 10) of messages that will be displayed on the c
 
 ### Public Files
 
-Files in `./public/` will be available through the `/files/` endpoint on default port `7070` as base64-encoded strings in a JSON object.
-
-This feature is exclusively used for the `netvars.dat` file, which stores matchmaking information for the game and toggling of some features (such as the WBID option in menu and Hunter, Hunted mode).
-
-Alongside the game server, files in `./web/` will be available through the default port `8080` as a website.
+This feature is not currently used. The `netvars.dat` file is now static and included in the `basecfg` directory.
 
 ### Default Save File
 
@@ -151,7 +159,7 @@ The default json file skips tutorials and starts players at level 1 with all red
 
 ### Database
 
-The server uses a SQLite database under `database.db` to store user information.
+The server uses a SQLite database to store user information. The database file is created inside the `usercfg` directory.
 
 Users are identified by their UUID, linked IP address, and Steam ID.
 
@@ -173,7 +181,7 @@ Not much testing has been done with this feature, so it may not work as intended
 
 This server does not re-implement Fireteam OAuth and its ticket system.
 
-Instead, it generates per-session UUIDs determined by the ticket and a master key.
+Instead, it generates per-session UUIDs determined by the ticket.
 
 If the user's IP address is found in the database, the server will provide the linked UUID.
 
@@ -189,11 +197,14 @@ Users cannot yet delete their data from the database, but this feature will be i
 
 ## Configuration
 
-After first run, a `config.json` file will be generated in the root directory.
+Configuration is now handled via environment variables. Create a `.env` file (you can copy `.env.example`) to override the default settings.
 
-Set options in this file to configure the server and its command line output.
+| Variable         | Description                                        | Default |
+|------------------|----------------------------------------------------|---------|
+| `HTTP_PORT`      | The port for the HTTP server to listen on.         | `8080`  |
+| `DEBUG`          | Set to `true` to enable verbose logging.           | `false` |
+| `WIPE_DB_ON_START` | Set to `true` to wipe the user database on start. | `false` |
 
-When updating, it is recommended to delete this file to ensure that the latest version is used.
 
 ## Contributing
 
