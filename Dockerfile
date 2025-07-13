@@ -23,9 +23,15 @@ COPY --from=builder /usr/src/app/node_modules ./node_modules
 # Copy the rest of the application code
 COPY . .
 
+# Copy basecfg to a default location
+COPY basecfg/ /usr/src/app/basecfg_default/
+
 # Expose the port the app runs on
 # This should match the HTTP_PORT in your .env file or the default in index.js
 EXPOSE 8080
 
-# Define the command to run the application
+# Define the entrypoint and command to run the application
+COPY entrypoint.sh /usr/src/app/entrypoint.sh
+RUN chmod +x /usr/src/app/entrypoint.sh
+ENTRYPOINT ["/usr/src/app/entrypoint.sh"]
 CMD ["node", "index.js"]
