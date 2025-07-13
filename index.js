@@ -2,15 +2,23 @@
 // Licensed under the MIT License
 // Copyright (c) 2023 KiwifruitDev
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 // Imports
 const express = require("express");
 const fse = require("fs-extra");
 const Database = require("better-sqlite3");
 const getUuid = require("uuid-by-string");
-const http = require("http"); // Keep http, remove https
+const http = require("http");
 const xmljs = require("xml-js");
 const js2xml = xmljs.js2xml;
 const xml2js = xmljs.xml2js;
+
+// Configuration from environment variables
+const HTTP_PORT = process.env.HTTP_PORT || 8080;
+const DEBUG = process.env.DEBUG === 'true';
+const WIPE_DB_ON_START = process.env.WIPE_DB_ON_START === 'true';
 
 // If usercfg folder doesn't exist, copy basecfg to usercfg
 if(!fse.existsSync("./usercfg")) {
@@ -22,8 +30,7 @@ if(!fse.existsSync("./usercfg")) {
         process.exit(1);
     }
 }
-// Load usercfg
-const config = JSON.parse(fse.readFileSync("./usercfg/config.json"));
+// Load usercfg data (excluding config.json)
 const motd = JSON.parse(fse.readFileSync("./usercfg/motd.json"));
 const store = JSON.parse(fse.readFileSync("./usercfg/store.json"));
 const credits = JSON.parse(fse.readFileSync("./usercfg/credits.json"));
@@ -35,13 +42,13 @@ const baseinventory = JSON.parse(fse.readFileSync("./usercfg/inventory.json"));
 // Database
 // Initialize Better-SQLite3 database instance.
 // Verbose logging can be enabled via config for debugging.
-const db = new Database("./usercfg/database.db", { verbose: config.debug ? console.log : null });
+const db = new Database("./usercfg/database.db", { verbose: DEBUG ? console.log : null });
 // Enable Write-Ahead Logging for better concurrency and performance.
 db.pragma('journal_mode = WAL');
 
 // Conditionally wipe the users table on startup if configured.
 // This is useful for development or testing environments.
-if(config.database.wipe_on_start)
+if(WIPE_DB_ON_START)
 {
     console.log("Wiping users table as per configuration.");
     db.exec("DROP TABLE IF EXISTS users"); // Use IF EXISTS for safety
@@ -62,7 +69,7 @@ app.use(express.text({ type: "text/xml" }));
 
 // Log incoming requests if debug mode is enabled.
 // Provides visibility into server traffic for debugging.
-if(config.debug) {
+if(DEBUG) {
     app.use((req, res, next) => {
         console.log(`Request: ${req.method} ${req.url}`);
         next();
@@ -291,7 +298,7 @@ app.get("/users/:uuid/:subpage?/:subpage2?", function(req, res) {
     }
     const authenticatedUuid = authParts[1]; // UUID from the token
 
-    if (config.debug) {
+    if (DEBUG) {
         console.log(`User data GET request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
     }
 
@@ -367,7 +374,7 @@ app.put("/users/:uuid/:subpage?/:subpage2?", function(req, res) {
     }
     const authenticatedUuid = authParts[1];
 
-    if (config.debug) {
+    if (DEBUG) {
         console.log(`User data PUT request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
     }
 
@@ -442,7 +449,7 @@ app.all("/actions/:action", (req, res) => {
 
 // Dummy function for logging SOAP calls, can be expanded for actual logic.
 function logSoapCall(functionName, args) {
-    if (config.debug) {
+    if (DEBUG) {
         console.log(`SOAP Call: ${functionName}`);
         console.log("Arguments:", args);
     }
@@ -594,7 +601,7 @@ function buildSoapResponse(methodName, resultData) {
         }]
     };
     try {
-        return js2xml(soapEnvelope, { compact: false, spaces: config.debug ? 2 : 0 }); // Pretty print if debug
+        return js2xml(soapEnvelope, { compact: false, spaces: DEBUG ? 2 : 0 }); // Pretty print if debug
     } catch (e) {
         console.error("SOAP Error: Failed to serialize success response:", e);
         // Fallback to a generic server fault if serialization fails
@@ -644,7 +651,7 @@ function buildSoapFault(faultCode, faultString, detail = "") {
         }]
     };
      try {
-        return js2xml(soapEnvelope, { compact: false, spaces: config.debug ? 2 : 0 });
+        return js2xml(soapEnvelope, { compact: false, spaces: DEBUG ? 2 : 0 });
     } catch (e) {
         console.error("SOAP Error: Failed to serialize FAULT response:", e);
         // Ultimate fallback if even fault serialization fails
@@ -664,10 +671,10 @@ app.post("/CLS/WbSubscriptionManagement.asmx", handleSoapRequest);
 const server = http.createServer(app);
 
 // Start listening on the HTTP port specified in the configuration.
-server.listen(config.host.http_port, () => {
+server.listen(HTTP_PORT, () => {
     // Log a message indicating the server is listening, if debug mode is enabled.
-    if (config.debug) {
-        console.log(`HTTP Server: Listening on port ${config.host.http_port}`);
+    if (DEBUG) {
+        console.log(`HTTP Server: Listening on port ${HTTP_PORT}`);
     }
 });
 
