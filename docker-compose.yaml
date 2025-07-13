@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  arkham-revived:
+    image: ghcr.io/adanlink/arkham-revived:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./usercfg:/usr/src/app/usercfg
+    restart: unless-stopped
