@@ -29,7 +29,7 @@ if (!fse.existsSync("./usercfg")) {
     }
 }
 
-const motd = JSON.parse(fse.readFileSync("./usercfg/motd.json"));
+const motd = JSON.parse(fse.readFileSync("./basecfg/motd.json"));
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({
