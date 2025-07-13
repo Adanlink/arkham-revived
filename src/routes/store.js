@@ -6,9 +6,9 @@ const {
 } = require("../db/database");
 
 const router = express.Router();
-const catalog = JSON.parse(fse.readFileSync("./usercfg/catalog.json"));
-const credits = JSON.parse(fse.readFileSync("./usercfg/credits.json"));
-const store = JSON.parse(fse.readFileSync("./usercfg/store.json"));
+const catalog = JSON.parse(fse.readFileSync("./basecfg/catalog.json"));
+const credits = JSON.parse(fse.readFileSync("./basecfg/credits.json"));
+const store = JSON.parse(fse.readFileSync("./basecfg/store.json"));
 
 router.get("/catalog/general", function(req, res) {
     res.json(catalog);

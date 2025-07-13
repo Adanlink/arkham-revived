@@ -16,8 +16,8 @@ if (WIPE_DB_ON_START) {
 
 db.exec("CREATE TABLE IF NOT EXISTS users (uuid TEXT PRIMARY KEY, inventory TEXT, data TEXT, consoleid TEXT, consoleticket TEXT, ip TEXT)");
 
-const baseinventory = JSON.parse(fse.readFileSync("./usercfg/inventory.json"));
-const save = JSON.parse(fse.readFileSync("./usercfg/save.json"));
+const baseinventory = JSON.parse(fse.readFileSync("./basecfg/inventory.json"));
+const save = JSON.parse(fse.readFileSync("./basecfg/save.json"));
 
 module.exports = {
     db,
