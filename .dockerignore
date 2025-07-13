@@ -1,0 +1,24 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Environment variables
+.env
+.env.example
+
+# User-specific configuration and data
+usercfg/
+oldbasecfg/
+
+# OS-specific
+.DS_Store
+Thumbs.db
