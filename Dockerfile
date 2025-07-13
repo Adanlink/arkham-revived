@@ -1,5 +1,5 @@
 # Stage 1: Build dependencies
-FROM --platform=linux/arm64 node:20-alpine AS builder
+FROM node:20-alpine AS builder
 
 # Install build dependencies for native modules like better-sqlite3
 # python3, make, and g++ are required by node-gyp
@@ -13,7 +13,7 @@ COPY package.json package-lock.json ./
 RUN npm install
 
 # Stage 2: Create the final production image
-FROM --platform=linux/arm64 node:20-alpine
+FROM node:20-alpine
 
 WORKDIR /usr/src/app
 
