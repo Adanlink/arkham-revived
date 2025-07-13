@@ -1,12 +1,12 @@
 {
     "host": {
-        "http_port": 80,
+        "http_port": 8080,
         "https_port": 443,
         "https_enabled": false,
         "localhost_passthrough_port": 8080,
-        "localhost_passthrough_enabled": true,
-        "https_key": "./ssl/privkey.pem",
-        "https_cert": "./ssl/fullchain.pem",
+        "localhost_passthrough_enabled": false,
+        "https_key": "",
+        "https_cert": "",
         "keepalive_timeout": 5
     },
     "database": {
