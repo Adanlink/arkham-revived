@@ -107,11 +107,11 @@ function buildSoapResponse(methodName, resultData) {
             elements: [{
                 type: "element",
                 name: "soap:Body",
-                elements: [js2xml({
+                elements: (js2xml({
                     element: responseBody
                 }, {
                     compact: false
-                }).elements[0]]
+                }).elements || [])
             }]
         }]
     };
