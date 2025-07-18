@@ -18,6 +18,7 @@ router.post("/token", function(req, res) {
         return res.status(400).send("Invalid authorization header or missing ticket");
     }
 
+    logger.debug('Incoming request:', req);
     const ticketHeader = req.body.ticket.replace(/[_|-]/g, "");
     let uuid;
 
@@ -26,14 +27,8 @@ router.post("/token", function(req, res) {
         uuid = userByTicket.uuid;
         logger.info(`Found user by ticket: ${uuid}`);
     } else {
-        const userByIp = db.prepare("SELECT uuid FROM users WHERE ip = ?").get(req.ip);
-        if (userByIp) {
-            uuid = userByIp.uuid;
-            logger.info(`Found user by IP: ${uuid}`);
-        } else {
-            uuid = getUuid(ticketHeader);
-            logger.info(`Generated new UUID: ${uuid}`);
-        }
+        uuid = getUuid(ticketHeader);
+        logger.info(`Generated new UUID: ${uuid}`);
     }
 
     const tokenResponse = {
