@@ -71,7 +71,7 @@ function processTransaction(req, res) {
         return res.status(500).send("Internal server error: User not found");
     }
 
-    console.log(`Processing transaction: ${transactionId} for user: ${uuid}`);
+    logger.info(`Processing transaction: ${transactionId} for user: ${uuid}`);
 
     const unlocks = {
         "items": {}
@@ -95,7 +95,7 @@ function processTransaction(req, res) {
                 }
                 break;
             default:
-                console.log(`Transaction ID ${transactionId} does not correspond to a specific item unlock rule.`);
+                logger.warn(`Transaction ID ${transactionId} does not correspond to a specific item unlock rule.`);
                 break;
         }
     } catch (e) {

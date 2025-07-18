@@ -4,9 +4,10 @@ const {
     baseinventory,
     save
 } = require("../db/database");
+const logger = require('../utils/logger');
 
 const router = express.Router();
-const DEBUG = process.env.DEBUG === 'true';
+const DEBUG = process.env.LOG_LEVEL === 'debug';
 
 router.get("/:uuid/:subpage?/:subpage2?", function(req, res) {
     const requestUrlUuid = req.params.uuid;
@@ -22,9 +23,7 @@ router.get("/:uuid/:subpage?/:subpage2?", function(req, res) {
     }
     const authenticatedUuid = authParts[1];
 
-    if (DEBUG) {
-        console.log(`User data GET request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
-    }
+    logger.debug(`User data GET request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
 
     if (requestUrlUuid !== "me") {
         if (subpage === "profile" && requestUrlUuid === authenticatedUuid) {
@@ -47,7 +46,7 @@ router.get("/:uuid/:subpage?/:subpage2?", function(req, res) {
                 }
                 return res.json(profileData);
             } else {
-                console.log(`Unimplemented GET endpoint: /users/${requestUrlUuid}/${subpage}/${subpage2 || ''}`);
+                logger.debug(`Unimplemented GET endpoint: /users/${requestUrlUuid}/${subpage}/${subpage2 || ''}`);
                 return res.status(404).json({
                     message: "Profile sub-resource not found or not implemented."
                 });
@@ -83,7 +82,7 @@ router.get("/:uuid/:subpage?/:subpage2?", function(req, res) {
         return res.json(inventoryObject);
     }
 
-    console.log(`Unimplemented GET endpoint: ${req.url}`);
+    logger.debug(`Unimplemented GET endpoint: ${req.url}`);
     res.status(404).json({
         message: "Resource not found or not implemented."
     });
@@ -103,9 +102,7 @@ router.put("/:uuid/:subpage?/:subpage2?", function(req, res) {
     }
     const authenticatedUuid = authParts[1];
 
-    if (DEBUG) {
-        console.log(`User data PUT request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
-    }
+    logger.debug(`User data PUT request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
 
     if (requestUrlUuid !== "me" && requestUrlUuid !== authenticatedUuid) {
         return res.status(403).send("Forbidden: Cannot modify another user's data.");
@@ -119,7 +116,7 @@ router.put("/:uuid/:subpage?/:subpage2?", function(req, res) {
     }
 
     if (subpage === "wbnet" && requestUrlUuid === "me") {
-        console.log("WBNet link attempt:", req.body);
+        logger.debug("WBNet link attempt:", req.body);
         return res.json({
             message: "No WBNet user linked",
             code: 2600,
@@ -132,18 +129,18 @@ router.put("/:uuid/:subpage?/:subpage2?", function(req, res) {
         }
 
         const updatedData = req.body;
-        if (updatedData.data.AccountXPLevel < 24) {
+        /*if (updatedData.data.AccountXPLevel < 24) {
             updatedData.data.AccountXPLevel = 24;
-            console.log(`User ${targetUuid}: AccountXPLevel adjusted to 24.`);
+            logger.info(`User ${targetUuid}: AccountXPLevel adjusted to 24.`);
         }
         if (updatedData.data.baneXPLevel < 24) {
             updatedData.data.baneXPLevel = 24;
-            console.log(`User ${targetUuid}: baneXPLevel adjusted to 24.`);
+            logger.info(`User ${targetUuid}: baneXPLevel adjusted to 24.`);
         }
         if (updatedData.data.jokerXPLevel < 24) {
             updatedData.data.jokerXPLevel = 24;
-            console.log(`User ${targetUuid}: jokerXPLevel adjusted to 24.`);
-        }
+            logger.info(`User ${targetUuid}: jokerXPLevel adjusted to 24.`);
+        }*/
 
         try {
             const profileJson = JSON.stringify(updatedData);
@@ -155,7 +152,7 @@ router.put("/:uuid/:subpage?/:subpage2?", function(req, res) {
         }
     }
 
-    console.log(`Unimplemented PUT endpoint: ${req.url}`);
+    logger.debug(`Unimplemented PUT endpoint: ${req.url}`);
     return res.status(404).json({
         message: "Resource for update not found or not implemented."
     });

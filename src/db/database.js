@@ -1,16 +1,17 @@
 const Database = require("better-sqlite3");
 const fse = require("fs-extra");
+const logger = require('../utils/logger');
 
-const DEBUG = process.env.DEBUG === 'true';
+const DEBUG = process.env.LOG_LEVEL === 'debug';
 const WIPE_DB_ON_START = process.env.WIPE_DB_ON_START === 'true';
 
 const db = new Database("./usercfg/database.db", {
-    verbose: DEBUG ? console.log : null
+    verbose: DEBUG ? logger.debug : null
 });
 db.pragma('journal_mode = WAL');
 
 if (WIPE_DB_ON_START) {
-    console.log("Wiping users table as per configuration.");
+    logger.info("Wiping users table as per configuration.");
     db.exec("DROP TABLE IF EXISTS users");
 }
 
