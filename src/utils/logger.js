@@ -26,10 +26,13 @@ const logger = pino({
       return { level: label.toUpperCase() };
     },
   },
-  prettyPrint: {
-    colorize: true,
-    levelFirst: true,
-    translateTime: 'UTC:yyyy-mm-dd\'T\'HH:MM:ss\'Z\'',
+  transport: {
+    target: 'pino-pretty',
+    options: {
+      colorize: true,
+      levelFirst: true,
+      translateTime: 'UTC:yyyy-mm-dd\'T\'HH:MM:ss\'Z\'',
+    },
   },
 }, stream);
 
