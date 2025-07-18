@@ -6,6 +6,7 @@ require('dotenv').config();
 const express = require("express");
 const fse = require("fs-extra");
 const http = require("http");
+const logger = require('./src/utils/logger');
 const {
     db
 } = require("./src/db/database");
@@ -18,13 +19,12 @@ const storeRouter = require("./src/routes/store");
 const usersRouter = require("./src/routes/users");
 
 const HTTP_PORT = process.env.HTTP_PORT || 8080;
-const DEBUG = process.env.DEBUG === 'true';
 
 if (!fse.existsSync("./usercfg")) {
     if (fse.existsSync("./basecfg")) {
         fse.copySync("./basecfg", "./usercfg");
     } else {
-        console.log("WARNING: basecfg folder is missing! Re-install is recommended.");
+        logger.warn("basecfg folder is missing! Re-install is recommended.");
         process.exit(1);
     }
 }
@@ -39,12 +39,16 @@ app.use(express.text({
     type: "text/xml"
 }));
 
-if (DEBUG) {
-    app.use((req, res, next) => {
-        console.log(`Request: ${req.method} ${req.url}`);
-        next();
-    });
-}
+app.use((req, res, next) => {
+    logger.info(`Request: ${req.method} ${req.url}`);
+    if (process.env.LOG_LEVEL === 'verbose') {
+        logger.debug({
+            headers: req.headers,
+            body: req.body
+        }, 'Verbose request log');
+    }
+    next();
+});
 
 app.get("/motd", function(req, res) {
     res.json(motd);
@@ -56,7 +60,7 @@ app.use("/store", storeRouter);
 app.use("/users", usersRouter);
 
 app.all("/actions/:action", (req, res) => {
-    console.log(`Received request for unknown /actions endpoint: ${req.params.action}`);
+    logger.info(`Received request for unknown /actions endpoint: ${req.params.action}`);
     res.status(501).send("Not Implemented");
 });
 
@@ -66,13 +70,11 @@ app.post("/CLS/WbSubscriptionManagement.asmx", handleSoapRequest);
 const server = http.createServer(app);
 
 server.listen(HTTP_PORT, () => {
-    if (DEBUG) {
-        console.log(`HTTP Server: Listening on port ${HTTP_PORT}`);
-    }
+    logger.info(`HTTP Server: Listening on port ${HTTP_PORT}`);
 });
 
 server.on("error", (err) => {
-    console.error("HTTP Server startup error:", err.message);
+    logger.error("HTTP Server startup error:", err.message);
     process.exit(1);
 });
 
@@ -85,33 +87,33 @@ server.on('connection', (connection) => {
 });
 
 function gracefulShutdown(signal) {
-    console.log(`${signal} received. Shutting down gracefully...`);
+    logger.info(`${signal} received. Shutting down gracefully...`);
 
     server.close((err) => {
         if (err) {
-            console.error("Error during HTTP server shutdown:", err.message);
+            logger.error("Error during HTTP server shutdown:", err.message);
         } else {
-            console.log("HTTP server closed.");
+            logger.info("HTTP server closed.");
         }
 
         if (db && typeof db.close === 'function') {
             const dbCloseTimeout = setTimeout(() => {
-                console.error("Database close timed out. Forcing exit.");
+                logger.error("Database close timed out. Forcing exit.");
                 process.exit(1);
             }, 5000);
 
             db.close((dbErr) => {
                 clearTimeout(dbCloseTimeout);
                 if (dbErr) {
-                    console.error("Error closing database:", dbErr.message);
+                    logger.error("Error closing database:", dbErr.message);
                     process.exit(1);
                 } else {
-                    console.log("Database connection closed.");
+                    logger.info("Database connection closed.");
                     process.exit(0);
                 }
             });
         } else {
-            console.log("Database connection not available or already closed.");
+            logger.info("Database connection not available or already closed.");
             process.exit(err ? 1 : 0);
         }
     });
@@ -119,14 +121,14 @@ function gracefulShutdown(signal) {
     const connectionDestroyTimeout = 2000;
     setTimeout(() => {
         if (activeConnections.size > 0) {
-            console.log(`Forcing close of ${activeConnections.size} remaining connections after ${connectionDestroyTimeout}ms.`);
+            logger.info(`Forcing close of ${activeConnections.size} remaining connections after ${connectionDestroyTimeout}ms.`);
             activeConnections.forEach(connection => connection.destroy());
         }
     }, connectionDestroyTimeout);
 
     const forceExitTimeout = 10000;
     setTimeout(() => {
-        console.error("Graceful shutdown timed out. Forcing exit.");
+        logger.error("Graceful shutdown timed out. Forcing exit.");
         process.exit(1);
     }, forceExitTimeout).unref();
 }
@@ -135,12 +137,17 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 process.on("uncaughtException", (err, origin) => {
-    console.error(`Uncaught Exception at: ${origin}, error: ${err.message}`);
-    console.error(err.stack);
+    logger.error({
+        err,
+        origin
+    }, 'Uncaught Exception');
     gracefulShutdown("uncaughtException");
 });
 
 process.on("unhandledRejection", (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    logger.error({
+        reason,
+        promise
+    }, 'Unhandled Rejection');
     gracefulShutdown("unhandledRejection");
 });

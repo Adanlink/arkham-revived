@@ -2,19 +2,18 @@ const getUuid = require("uuid-by-string");
 const xmljs = require("xml-js");
 const js2xml = xmljs.js2xml;
 const xml2js = xmljs.xml2js;
+const logger = require('../utils/logger');
 const {
     db,
     baseinventory,
     save
 } = require("../db/database");
 
-const DEBUG = process.env.DEBUG === 'true';
-
 function logSoapCall(functionName, args) {
-    if (DEBUG) {
-        console.log(`SOAP Call: ${functionName}`);
-        console.log("Arguments:", args);
-    }
+    logger.info({
+        functionName,
+        args
+    }, 'SOAP Call');
 }
 
 const soapServiceMethods = {
@@ -28,11 +27,11 @@ const soapServiceMethods = {
             if (!existingUser) {
                 db.prepare("INSERT INTO users (uuid, inventory, data, consoleid, consoleticket, ip) VALUES (?, ?, ?, ?, ?, ?)")
                     .run(uuid, JSON.stringify(baseinventory), JSON.stringify(save), args.consoleId, ticketHeader, args.ip);
-                console.log(`SOAP: New user created for consoleId ${args.consoleId}, UUID ${uuid}`);
+                logger.info(`SOAP: New user created for consoleId ${args.consoleId}, UUID ${uuid}`);
             } else {
                 db.prepare("UPDATE users SET consoleticket = ?, uuid = ?, ip = ? WHERE consoleid = ?")
                     .run(ticketHeader, uuid, args.ip, args.consoleId);
-                console.log(`SOAP: User updated for consoleId ${args.consoleId}, UUID ${uuid}`);
+                logger.info(`SOAP: User updated for consoleId ${args.consoleId}, UUID ${uuid}`);
             }
         }
         return {};
@@ -118,10 +117,10 @@ function buildSoapResponse(methodName, resultData) {
     try {
         return js2xml(soapEnvelope, {
             compact: false,
-            spaces: DEBUG ? 2 : 0
+            spaces: process.env.LOG_LEVEL === 'verbose' ? 2 : 0
         });
     } catch (e) {
-        console.error("SOAP Error: Failed to serialize success response:", e);
+        logger.error("SOAP Error: Failed to serialize success response:", e);
         return buildSoapFault("Server", "Failed to serialize SOAP response.");
     }
 }
@@ -187,10 +186,10 @@ function buildSoapFault(faultCode, faultString, detail = "") {
     try {
         return js2xml(soapEnvelope, {
             compact: false,
-            spaces: DEBUG ? 2 : 0
+            spaces: process.env.LOG_LEVEL === 'verbose' ? 2 : 0
         });
     } catch (e) {
-        console.error("SOAP Error: Failed to serialize FAULT response:", e);
+        logger.error("SOAP Error: Failed to serialize FAULT response:", e);
         return "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><soap:Fault><faultcode>soap:Server</faultcode><faultstring>Internal server error during fault serialization.</faultstring></soap:Fault></soap:Body></soap:Envelope>";
     }
 }
@@ -202,7 +201,7 @@ function handleSoapRequest(req, res) {
             compact: false
         });
     } catch (e) {
-        console.error("SOAP Error: Invalid XML request:", e);
+        logger.error("SOAP Error: Invalid XML request:", e);
         return res.status(400).type('text/xml').send(buildSoapFault("Client", "Invalid XML format"));
     }
 
@@ -220,7 +219,7 @@ function handleSoapRequest(req, res) {
             });
         }
     } catch (e) {
-        console.error("SOAP Error: Could not parse method name or arguments from request:", e);
+        logger.error("SOAP Error: Could not parse method name or arguments from request:", e);
         return res.status(500).type('text/xml').send(buildSoapFault("Server", "Error parsing SOAP request structure"));
     }
 
@@ -234,19 +233,19 @@ function handleSoapRequest(req, res) {
             resultData = soapServiceMethods[methodName](methodArgs);
             if (resultData && Object.keys(resultData).length === 0 && methodName !== "LookupWbid" && methodName !== "AssociateWbid" && methodName !== "DisassociateWbid" && methodName !== "CreateAccount" && methodName !== "CreateAccountAndAssociate" && methodName !== "ResetPassword" && methodName !== "StartWBPasswordReset" && methodName !== "StartWBPasswordResetFromConsole" && methodName !== "FinishWBPasswordReset") {
                 if (methodName === "GetSubscriptionInformation") {
-                    console.warn(`SOAP: Method ${methodName} returned empty, treating as fault.`);
+                    logger.warn(`SOAP: Method ${methodName} returned empty, treating as fault.`);
                     fault = true;
                 }
             }
         } catch (e) {
-            console.error(`SOAP Error: Exception in method ${methodName}:`, e);
+            logger.error(`SOAP Error: Exception in method ${methodName}:`, e);
             resultData = {
                 ErrorMessage: e.message
             };
             fault = true;
         }
     } else {
-        console.warn(`SOAP: Unhandled method called: ${methodName}`);
+        logger.warn(`SOAP: Unhandled method called: ${methodName}`);
         fault = true;
     }
 
