@@ -23,9 +23,11 @@
     "fs-extra": "^11.1.1",
     "geoip-lite": "^1.4.7",
     "pino": "^9.7.0",
-    "pino-pretty": "^13.0.0",
     "rotating-file-stream": "^3.2.6",
     "uuid-by-string": "^4.0.0",
     "xml-js": "^1.6.11"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.0.0"
   }
 }
