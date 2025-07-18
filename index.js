@@ -41,11 +41,8 @@ app.use(express.text({
 
 app.use((req, res, next) => {
     logger.info(`Request: ${req.method} ${req.url}`);
-    if (process.env.LOG_LEVEL === 'verbose') {
-        logger.debug({
-            headers: req.headers,
-            body: req.body
-        }, 'Verbose request log');
+    if (process.env.LOG_LEVEL === 'trace') {
+        logger.trace(req, 'Trace request log');
     }
     next();
 });
@@ -60,7 +57,7 @@ app.use("/store", storeRouter);
 app.use("/users", usersRouter);
 
 app.all("/actions/:action", (req, res) => {
-    logger.info(`Received request for unknown /actions endpoint: ${req.params.action}`);
+    logger.debug(`Received request for unknown /actions endpoint: '${req.params.action}'`);
     res.status(501).send("Not Implemented");
 });
 
