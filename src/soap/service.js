@@ -25,12 +25,12 @@ const soapServiceMethods = {
 
             const existingUser = db.prepare("SELECT * FROM users WHERE consoleid = ?").get(args.consoleId);
             if (!existingUser) {
-                db.prepare("INSERT INTO users (uuid, inventory, data, consoleid, consoleticket, ip) VALUES (?, ?, ?, ?, ?, ?)")
-                    .run(uuid, JSON.stringify(baseinventory), JSON.stringify(save), args.consoleId, ticketHeader, args.ip);
+                db.prepare("INSERT INTO users (uuid, inventory, data, consoleid, consoleticket) VALUES (?, ?, ?, ?, ?)")
+                    .run(uuid, JSON.stringify(baseinventory), JSON.stringify(save), args.consoleId, ticketHeader);
                 logger.info(`SOAP: New user created for consoleId ${args.consoleId}, UUID ${uuid}`);
             } else {
-                db.prepare("UPDATE users SET consoleticket = ?, uuid = ?, ip = ? WHERE consoleid = ?")
-                    .run(ticketHeader, uuid, args.ip, args.consoleId);
+                db.prepare("UPDATE users SET consoleticket = ?, uuid = ? WHERE consoleid = ?")
+                    .run(ticketHeader, uuid, args.consoleId);
                 logger.info(`SOAP: User updated for consoleId ${args.consoleId}, UUID ${uuid}`);
             }
         }
@@ -222,8 +222,6 @@ function handleSoapRequest(req, res) {
         logger.error("SOAP Error: Could not parse method name or arguments from request:", e);
         return res.status(500).type('text/xml').send(buildSoapFault("Server", "Error parsing SOAP request structure"));
     }
-
-    methodArgs.ip = req.ip;
 
     let resultData;
     let fault = false;
