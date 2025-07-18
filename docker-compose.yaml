@@ -7,5 +7,6 @@ services:
       - "8080:8080"
     volumes:
       - ./usercfg:/usr/src/app/usercfg
+      - ./logs:/usr/src/app/logs
       - ./basecfg:/usr/src/app/basecfg
     restart: unless-stopped

@@ -8,6 +8,26 @@ Supports user authentication and saving of player data.
 
 Join the [Discord](https://discord.gg/rrwWcy82fr) for support, updates, and matchmaking.
 
+## Table of Contents
+
+- [Usage](#usage)
+  - [Migration](#migration)
+- [Setup](#setup)
+  - [Requirements](#requirements)
+  - [Installation](#installation)
+  - [Docker](#docker)
+- [Features](#features)
+  - [Message Of The Day](#message-of-the-day)
+  - [Public Files](#public-files)
+  - [Default Save File](#default-save-file)
+  - [Database](#database)
+  - [Matchmaking](#matchmaking)
+  - [OAuth](#oauth)
+  - [Security](#security)
+- [Configuration](#configuration)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Usage
 
 Follow these steps in order to play on Arkham: Revived.
@@ -131,6 +151,8 @@ docker build -t arkham-revived .
 docker run -p 8080:8080 -d --name arkham-server arkham-revived
 ```
 
+## Features
+
 ### Message Of The Day
 
 ![MOTD in-game](https://i.imgur.com/HUGcQkr.png)
@@ -199,10 +221,10 @@ Users cannot yet delete their data from the database, but this feature will be i
 
 Configuration is now handled via environment variables. Create a `.env` file (you can copy `.env.example`) to override the default settings.
 
-| Variable         | Description                                        | Default |
-|------------------|----------------------------------------------------|---------|
-| `HTTP_PORT`      | The port for the HTTP server to listen on.         | `8080`  |
-| `DEBUG`          | Set to `true` to enable verbose logging.           | `false` |
+| Variable | Description | Default |
+| --- | --- | --- |
+| `HTTP_PORT` | The port for the HTTP server to listen on. | `8080` |
+| `LOG_LEVEL` | The level of logging to display. Can be `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`. | `info` |
 | `WIPE_DB_ON_START` | Set to `true` to wipe the user database on start. | `false` |
 
 
