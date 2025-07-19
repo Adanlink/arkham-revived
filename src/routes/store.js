@@ -4,6 +4,10 @@ const {
     db,
     baseinventory
 } = require("../db/database");
+const {
+    verifyToken
+} = require("../middleware/auth");
+const logger = require('../utils/logger');
 
 const router = express.Router();
 const catalog = JSON.parse(fse.readFileSync("./basecfg/catalog.json"));
@@ -22,7 +26,7 @@ router.get("/offers", function(req, res) {
     }
 });
 
-router.post("/vouchers/transactions", function(req, res) {
+router.post("/vouchers/transactions", verifyToken, function(req, res) {
     const validVouchers = [
         "e8fd70ec-f3ec-519b-8b57-70518c4c4f74",
         "640144eb-7862-5186-90d0-606211ec2271",
@@ -39,7 +43,7 @@ router.post("/vouchers/transactions", function(req, res) {
     res.status(201).json(response);
 });
 
-router.post("/purchases/transactions", function(req, res) {
+router.post("/purchases/transactions", verifyToken, function(req, res) {
     if (!req.body.offer_id) {
         return res.status(400).send("Missing offer_id in request body");
     }
@@ -52,22 +56,15 @@ router.post("/purchases/transactions", function(req, res) {
 
 function processTransaction(req, res) {
     const transactionId = req.params.transactionid;
+    const uuid = req.user.uuid;
+
     if (!transactionId) {
         return res.status(400).send("Invalid transaction ID: Missing");
     }
-    if (!req.headers.authorization) {
-        return res.status(400).send("Invalid authorization header: Missing");
-    }
-    const authParts = req.headers.authorization.split(" ");
-    if (authParts[0] !== "Bearer" || !authParts[1]) {
-        return res.status(400).send("Invalid authorization header: Malformed or missing token");
-    }
-
-    const uuid = authParts[1];
 
     const userExists = db.prepare("SELECT uuid FROM users WHERE uuid = ?").get(uuid);
     if (!userExists) {
-        console.error(`Transaction Error: UUID ${uuid} not found in database.`);
+        logger.error(`Transaction Error: UUID ${uuid} not found in database.`);
         return res.status(500).send("Internal server error: User not found");
     }
 
@@ -99,7 +96,7 @@ function processTransaction(req, res) {
                 break;
         }
     } catch (e) {
-        console.error(`Error processing transaction switch for ${transactionId}:`, e);
+        logger.error(`Error processing transaction switch for ${transactionId}:`, e);
     }
 
     const inventoryRow = db.prepare("SELECT inventory FROM users WHERE uuid = ?").get(uuid);
@@ -109,7 +106,7 @@ function processTransaction(req, res) {
         try {
             currentUserInventory = JSON.parse(inventoryRow.inventory);
         } catch (e) {
-            console.error(`Error parsing inventory for user ${uuid}:`, e);
+            logger.error(`Error parsing inventory for user ${uuid}:`, e);
         }
     }
 
@@ -122,14 +119,14 @@ function processTransaction(req, res) {
         const updatedInventoryJson = JSON.stringify(currentUserInventory);
         db.prepare("UPDATE users SET inventory = ? WHERE uuid = ?").run(updatedInventoryJson, uuid);
     } catch (e) {
-        console.error(`Error stringifying or updating inventory for user ${uuid}:`, e);
+        logger.error(`Error stringifying or updating inventory for user ${uuid}:`, e);
         return res.status(500).send("Internal server error: Could not update inventory.");
     }
 
     res.status(201).json(unlocks);
 }
 
-router.put("/vouchers/:transactionid", processTransaction);
-router.put("/purchases/:transactionid", processTransaction);
+router.put("/vouchers/:transactionid", verifyToken, processTransaction);
+router.put("/purchases/:transactionid", verifyToken, processTransaction);
 
 module.exports = router;

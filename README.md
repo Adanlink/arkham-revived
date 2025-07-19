@@ -42,9 +42,9 @@ Follow these steps in order to play on Arkham: Revived.
     EchoBaseURL="http://in.echo.fireteam.net/"
     WBIDTicketURL="https://tokenservice.psn.turbine.com/TokenService"
     WBIDAMSURL="https://cls.turbine.com/CLS"
-    ClientId="0938aa7a-6682-4b90-a97d-90becbddb9ce"
+    ClientId="REPLACE THIS WITH A RANDOM UUID"
     ClientIdSP="6ca97b4e-d278-48a4-8b66-80468447a513"
-    ClientSecret="GXnNQaRSuxaxlm6uR35HVk39u"
+    ClientSecret="REPLACE THIS WITH A RANDOM ALPHANUMERICAL STRING"
     ClientSecretSP="AzyEBlZdY87HO3HINj7rqoBo7"
     EchoUsername="8b8f1d8554d5437b8cdf689082311680"
     EchoPassword="b3014aee79ba4968886003ecb271f764"
@@ -70,6 +70,8 @@ Follow these steps in order to play on Arkham: Revived.
 
     - Note: The `BaseUrl` and `WBIDAMSURL` values are the only ones that need to be changed. The port should match the `HTTP_PORT` you configure for the server (default is 8080).
     - You must obtain the source IP address of the server you're connecting to. This is usually found in the "Getting Started" section of the server's website.
+    - You must generate a random UUID for the `ClientId`. You can use an online generator like [https://johnykvsky.github.io/uuid/](https://johnykvsky.github.io/uuid/).
+    - You should also generate a random alphanumerical string for the `ClientSecret`.
 
 5. Save the file and close it. This will allow the game to connect to Arkham: Revived.
 6. Locate `SHARED.SWP` in your Steam Cloud storage directory. This is usually found in `C:\Program Files (x86)\Steam\userdata\[User ID]\209000\remote`.

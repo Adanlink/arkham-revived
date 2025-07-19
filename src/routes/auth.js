@@ -1,8 +1,10 @@
 const express = require("express");
-const getUuid = require("uuid-by-string");
+const jwt = require("jsonwebtoken");
 const logger = require('../utils/logger');
 const {
-    db
+    db,
+    baseinventory,
+    save
 } = require("../db/database");
 
 const router = express.Router();
@@ -12,32 +14,53 @@ router.post("/token", function(req, res) {
         logger.warn('Token request with missing authorization header');
         return res.status(400).send("Invalid authorization header: Missing");
     }
+
     const authParts = req.headers.authorization.split(" ");
-    if (authParts[0] !== "Basic" || !req.body.ticket) {
-        logger.warn('Token request with invalid authorization header or missing ticket');
-        return res.status(400).send("Invalid authorization header or missing ticket");
+    if (authParts[0] !== "Basic" || authParts.length !== 2) {
+        logger.warn('Token request with invalid authorization header format');
+        return res.status(400).send("Invalid authorization header: Must be Basic auth");
     }
 
-    logger.debug('Incoming request:', req);
-    const ticketHeader = req.body.ticket.replace(/[_|-]/g, "");
-    let uuid;
+    const credentials = Buffer.from(authParts[1], 'base64').toString('utf-8').split(':');
+    const uuid = credentials[0];
+    const secret = credentials[1];
 
-    const userByTicket = db.prepare("SELECT uuid FROM users WHERE consoleticket = ?").get(ticketHeader);
-    if (userByTicket) {
-        uuid = userByTicket.uuid;
-        logger.info(`Found user by ticket: ${uuid}`);
-    } else {
-        uuid = getUuid(ticketHeader);
-        logger.info(`Generated new UUID: ${uuid}`);
+    if (!uuid || !secret) {
+        logger.warn('Token request with missing UUID or secret in credentials');
+        return res.status(400).send("Invalid credentials: UUID or secret missing");
     }
+
+    let user = db.prepare("SELECT * FROM users WHERE uuid = ?").get(uuid);
+
+    if (!user) {
+        // If user does not exist, create them
+        logger.info(`New user with UUID ${uuid}, creating database entry.`);
+        db.prepare("INSERT INTO users (uuid, secret, inventory, data) VALUES (?, ?, ?, ?)")
+            .run(uuid, secret, JSON.stringify(baseinventory), JSON.stringify(save));
+        user = {
+            uuid,
+            secret
+        }; // For JWT signing
+    } else if (user.secret !== secret) {
+        logger.warn(`Authentication failure for UUID ${uuid}: Incorrect secret.`);
+        return res.status(401).send("Unauthorized: Incorrect secret");
+    }
+
+    const expiresIn = '365d'; // Token valid for 1 year
+    const token = jwt.sign({
+        uuid: user.uuid
+    }, secret, {
+        expiresIn
+    });
 
     const tokenResponse = {
         "token_type": "bearer",
-        "access_token": uuid,
-        "expires_in": 1000000,
-        "refresh_token": "",
+        "access_token": token,
+        "expires_in": 31536000, // 1 year in seconds
+        "refresh_token": "", // No refresh token for now
     };
-    logger.info(`Responding with token for UUID: ${uuid}`);
+
+    logger.info(`Successfully authenticated user ${uuid}. JWT token issued.`);
     res.json(tokenResponse);
 });
 
