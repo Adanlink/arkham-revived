@@ -13,19 +13,20 @@ const router = express.Router();
 
 router.use(verifyToken);
 
-router.get("/:uuid/:subpage?/:subpage2?", function(req, res) {
-    const requestUrlUuid = req.params.uuid;
+router.get("/:user_id/:subpage?/:subpage2?", function(req, res) {
+    const requestUrlUserId = req.params.user_id;
     const subpage = req.params.subpage;
     const subpage2 = req.params.subpage2;
+    const authenticatedUserId = req.user.user_id;
     const authenticatedUuid = req.user.uuid;
 
-    logger.debug(`User data GET request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
-
-    if (requestUrlUuid !== "me" && requestUrlUuid !== authenticatedUuid) {
+    if (requestUrlUserId !== "me" && requestUrlUserId !== authenticatedUserId) {
         return res.status(403).send("Forbidden: Cannot access another user's data.");
     }
 
-    const targetUuid = (requestUrlUuid === "me") ? authenticatedUuid : requestUrlUuid;
+    const targetUuid = authenticatedUuid;
+
+    logger.debug(`User data GET request for URL user_id: ${requestUrlUserId}, Authenticated UUID: ${authenticatedUuid}`);
 
     if (subpage === "profile" && subpage2 === "private") {
         const user = db.prepare("SELECT data FROM users WHERE uuid = ?").get(targetUuid);
@@ -65,7 +66,7 @@ router.get("/:uuid/:subpage?/:subpage2?", function(req, res) {
         return res.json(inventoryObject);
     } else if (!subpage) {
         return res.json({
-            "user_id": authenticatedUuid
+            "user_id": authenticatedUserId
         });
     }
 
@@ -75,18 +76,20 @@ router.get("/:uuid/:subpage?/:subpage2?", function(req, res) {
     });
 });
 
-router.put("/:uuid/:subpage?/:subpage2?", function(req, res) {
-    const requestUrlUuid = req.params.uuid;
+router.put("/:user_id/:subpage?/:subpage2?", function(req, res) {
+    const requestUrlUserId = req.params.user_id;
     const subpage = req.params.subpage;
     const subpage2 = req.params.subpage2;
+    const authenticatedUserId = req.user.user_id;
     const authenticatedUuid = req.user.uuid;
 
-    logger.debug(`User data PUT request for URL UUID: ${requestUrlUuid}, Authenticated UUID: ${authenticatedUuid}`);
-
-    if (requestUrlUuid !== "me" && requestUrlUuid !== authenticatedUuid) {
+    if (requestUrlUserId !== "me" && requestUrlUserId !== authenticatedUserId) {
         return res.status(403).send("Forbidden: Cannot modify another user's data.");
     }
-    const targetUuid = (requestUrlUuid === "me") ? authenticatedUuid : requestUrlUuid;
+
+    const targetUuid = authenticatedUuid;
+
+    logger.debug(`User data PUT request for URL user_id: ${requestUrlUserId}, Authenticated UUID: ${authenticatedUuid}`);
 
     const userExists = db.prepare("SELECT uuid FROM users WHERE uuid = ?").get(targetUuid);
     if (!userExists) {
@@ -94,7 +97,7 @@ router.put("/:uuid/:subpage?/:subpage2?", function(req, res) {
         return res.status(404).send("User not found");
     }
 
-    if (subpage === "wbnet" && requestUrlUuid === "me") {
+    if (subpage === "wbnet" && requestUrlUserId === "me") {
         logger.debug("WBNet link attempt:", req.body);
         return res.json({
             message: "No WBNet user linked",

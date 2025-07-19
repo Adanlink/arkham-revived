@@ -1,6 +1,7 @@
 const Database = require("better-sqlite3");
 const fse = require("fs-extra");
 const logger = require('../utils/logger');
+const { v4: uuidv4 } = require('uuid');
 
 const DEBUG = process.env.LOG_LEVEL === 'debug';
 const WIPE_DB_ON_START = process.env.WIPE_DB_ON_START === 'true';
@@ -15,7 +16,7 @@ if (WIPE_DB_ON_START) {
     db.exec("DROP TABLE IF EXISTS users");
 }
 
-db.exec("CREATE TABLE IF NOT EXISTS users (uuid TEXT PRIMARY KEY, secret TEXT, inventory TEXT, data TEXT)");
+db.exec("CREATE TABLE IF NOT EXISTS users (uuid TEXT PRIMARY KEY, user_id TEXT, secret TEXT, inventory TEXT, data TEXT)");
 
 const columnCheck = db.prepare("PRAGMA table_info(users)").all();
 const consoleIdColumnExists = columnCheck.some(column => column.name === 'consoleid');

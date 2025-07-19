@@ -1,5 +1,6 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 const {
     db,
@@ -34,11 +35,13 @@ router.post("/token", function(req, res) {
 
     if (!user) {
         // If user does not exist, create them
-        logger.info(`New user with UUID ${uuid}, creating database entry.`);
-        db.prepare("INSERT INTO users (uuid, secret, inventory, data) VALUES (?, ?, ?, ?)")
-            .run(uuid, secret, JSON.stringify(baseinventory), JSON.stringify(save));
+        const newUserId = uuidv4();
+        logger.info(`New user with UUID ${uuid}, creating database entry with user_id ${newUserId}.`);
+        db.prepare("INSERT INTO users (uuid, user_id, secret, inventory, data) VALUES (?, ?, ?, ?, ?)")
+            .run(uuid, newUserId, secret, JSON.stringify(baseinventory), JSON.stringify(save));
         user = {
             uuid,
+            user_id: newUserId,
             secret
         }; // For JWT signing
     } else if (user.secret !== secret) {
@@ -48,7 +51,8 @@ router.post("/token", function(req, res) {
 
     const expiresIn = '365d'; // Token valid for 1 year
     const token = jwt.sign({
-        uuid: user.uuid
+        uuid: user.uuid,
+        user_id: user.user_id
     }, secret, {
         expiresIn
     });

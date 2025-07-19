@@ -25,6 +25,7 @@
     "jsonwebtoken": "^9.0.2",
     "pino": "^9.7.0",
     "rotating-file-stream": "^3.2.6",
+    "uuid": "^11.1.0",
     "uuid-by-string": "^4.0.0",
     "xml-js": "^1.6.11"
   },
