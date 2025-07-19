@@ -1,13 +1,7 @@
-const getUuid = require("uuid-by-string");
 const xmljs = require("xml-js");
 const js2xml = xmljs.js2xml;
 const xml2js = xmljs.xml2js;
 const logger = require('../utils/logger');
-const {
-    db,
-    baseinventory,
-    save
-} = require("../db/database");
 
 function logSoapCall(functionName, args) {
     logger.info({
@@ -19,21 +13,6 @@ function logSoapCall(functionName, args) {
 const soapServiceMethods = {
     LookupWbid: function(args) {
         logSoapCall("LookupWbid", args);
-        if (args.title === "OZZY" && args.uniqueId && args.consoleTicket && args.consoleId) {
-            const ticketHeader = args.consoleTicket.replace(/[\/\+]/g, "");
-            const uuid = getUuid(ticketHeader);
-
-            const existingUser = db.prepare("SELECT * FROM users WHERE consoleid = ?").get(args.consoleId);
-            if (!existingUser) {
-                db.prepare("INSERT INTO users (uuid, inventory, data, consoleid, consoleticket) VALUES (?, ?, ?, ?, ?)")
-                    .run(uuid, JSON.stringify(baseinventory), JSON.stringify(save), args.consoleId, ticketHeader);
-                logger.info(`SOAP: New user created for consoleId ${args.consoleId}, UUID ${uuid}`);
-            } else {
-                db.prepare("UPDATE users SET consoleticket = ?, uuid = ? WHERE consoleid = ?")
-                    .run(ticketHeader, uuid, args.consoleId);
-                logger.info(`SOAP: User updated for consoleId ${args.consoleId}, UUID ${uuid}`);
-            }
-        }
         return {};
     },
     AssociateWbid: function(args) {
@@ -70,17 +49,7 @@ const soapServiceMethods = {
     },
     GetSubscriptionInformation: function(args) {
         logSoapCall("GetSubscriptionInformation", args);
-        if (!args.consoleId) return {
-            Error: "Missing consoleId"
-        };
-        return {
-            GetSubscriptionInformationResult: {
-                WbidAccountId: getUuid(args.consoleId + ":accountid_sub"),
-                SubscriptionId: getUuid(args.consoleId + ":subscriptionid_sub"),
-                AccountId: getUuid(args.consoleId + ":accountid_sub_detail"),
-                Entitlements: []
-            }
-        };
+        return {};
     }
 };
 
